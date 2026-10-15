@@ -1,0 +1,10 @@
+.vscode/**
+.gitignore
+src/**
+docs/superpowers/**
+node_modules/**
+dist/**/*.test.js
+dist/**/*.test.js.map
+package-lock.json
+tsconfig.json
+*.vsix

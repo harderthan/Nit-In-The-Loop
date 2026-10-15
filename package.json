@@ -1,0 +1,146 @@
+{
+  "name": "nitl",
+  "displayName": "NITL",
+  "description": "Local line-by-line review threads for Git changes and coding agents",
+  "version": "0.1.0",
+  "publisher": "local",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./dist/extension.js",
+  "type": "commonjs",
+  "scripts": {
+    "compile": "tsc -p .",
+    "test": "node --import tsx --test src/**/*.test.ts src/*.test.ts",
+    "cli": "tsx src/cli.ts"
+  },
+  "activationEvents": [
+    "onView:agentReview.changes",
+    "onCommand:agentReview.openDiff"
+  ],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "agentReview",
+          "title": "NITL",
+          "icon": "assets/review.svg"
+        }
+      ]
+    },
+    "views": {
+      "agentReview": [
+        {
+          "id": "agentReview.changes",
+          "name": "Changed Files"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "agentReview.openDiff",
+        "title": "Open Review Diff",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "agentReview.refresh",
+        "title": "Refresh Reviews",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "agentReview.createThread",
+        "title": "Add Review Comment",
+        "enablement": "!commentIsEmpty"
+      },
+      {
+        "command": "agentReview.reply",
+        "title": "Reply to Review Thread",
+        "enablement": "!commentIsEmpty"
+      },
+      {
+        "command": "agentReview.resolve",
+        "title": "Resolve Review Thread"
+      },
+      {
+        "command": "agentReview.reopen",
+        "title": "Reopen Review Thread"
+      },
+      {
+        "command": "agentReview.showStale",
+        "title": "View Outdated Review Thread"
+      },
+      {
+        "command": "agentReview.copyCliCommand",
+        "title": "Copy NITL CLI Command",
+        "icon": "$(copy)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "agentReview.refresh",
+          "when": "view == agentReview.changes",
+          "group": "navigation"
+        },
+        {
+          "command": "agentReview.copyCliCommand",
+          "when": "view == agentReview.changes",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "agentReview.openDiff",
+          "when": "view == agentReview.changes",
+          "group": "inline"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "agentReview.createThread",
+          "when": "agentReview.reviewEditor",
+          "group": "1_modification"
+        }
+      ],
+      "comments/commentThread/context": [
+        {
+          "command": "agentReview.createThread",
+          "when": "commentController == agent-review && commentThreadIsEmpty",
+          "group": "inline"
+        },
+        {
+          "command": "agentReview.reply",
+          "when": "commentController == agent-review && !commentThreadIsEmpty && commentThread == open",
+          "group": "inline"
+        }
+      ],
+      "comments/commentThread/title": [
+        {
+          "command": "agentReview.resolve",
+          "when": "commentController == agent-review && commentThread == open",
+          "group": "inline"
+        },
+        {
+          "command": "agentReview.reopen",
+          "when": "commentController == agent-review && commentThread == resolved",
+          "group": "inline"
+        }
+      ]
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.96.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vscode-uri": "^3.2.0"
+  },
+  "bin": {
+    "nitl": "./dist/cli.js",
+    "agent-review": "./dist/cli.js"
+  }
+}
