@@ -2,9 +2,12 @@
 .gitignore
 src/**
 docs/superpowers/**
+docs/screenshots/**
 node_modules/**
 dist/**/*.test.js
 dist/**/*.test.js.map
 package-lock.json
 tsconfig.json
 *.vsix
+README.md
+MARKETPLACE.md
