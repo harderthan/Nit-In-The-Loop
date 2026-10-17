@@ -20,6 +20,7 @@
   },
   "activationEvents": [
     "onView:agentReview.changes",
+    "onView:agentReview.blame",
     "onCommand:agentReview.openDiff"
   ],
   "contributes": {
@@ -37,6 +38,10 @@
         {
           "id": "agentReview.changes",
           "name": "Changed Files"
+        },
+        {
+          "id": "agentReview.blame",
+          "name": "Git Blame"
         }
       ]
     },
@@ -45,6 +50,23 @@
         "command": "agentReview.openDiff",
         "title": "Open Review Diff",
         "icon": "$(diff)"
+      },
+      {
+        "command": "agentReview.showBlame",
+        "title": "Show Git Blame",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "agentReview.openBlameLine",
+        "title": "Open Blamed Line"
+      },
+      {
+        "command": "agentReview.openHistoryFile",
+        "title": "Open Commit Change"
+      },
+      {
+        "command": "agentReview.loadMoreHistory",
+        "title": "Load More Commits"
       },
       {
         "command": "agentReview.refresh",
@@ -90,6 +112,11 @@
           "command": "agentReview.copyCliCommand",
           "when": "view == agentReview.changes",
           "group": "navigation"
+        },
+        {
+          "command": "agentReview.refresh",
+          "when": "view == agentReview.blame",
+          "group": "navigation"
         }
       ],
       "view/item/context": [
@@ -97,6 +124,11 @@
           "command": "agentReview.openDiff",
           "when": "view == agentReview.changes",
           "group": "inline"
+        },
+        {
+          "command": "agentReview.showBlame",
+          "when": "view == agentReview.changes && viewItem == changedFile",
+          "group": "navigation"
         }
       ],
       "editor/context": [

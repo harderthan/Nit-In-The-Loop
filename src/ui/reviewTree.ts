@@ -19,7 +19,7 @@ export class ChangeItem extends vscode.TreeItem {
     this.description = `${status}${openCount ? ` · 🟢 ${openCount} open` : ''}${resolvedCount ? ` · ${resolvedCount} resolved` : ''}${unplaced.length ? ` · ${unplaced.length} outdated` : ''}`;
     this.tooltip = `${file.oldPath ? `${file.oldPath} → ` : ''}${file.path}\n${status} · ${openCount} open · ${resolvedCount} resolved${unplaced.length ? ` · ${unplaced.length} outdated` : ''}${file.binary ? '\nbinary file (comments unavailable)' : ''}`;
     this.resourceUri = vscode.Uri.file(path.join(repoRoot, file.path));
-    this.contextValue = 'changedFile';
+    this.contextValue = file.binary ? 'binaryChangedFile' : 'changedFile';
     this.command = { command: 'agentReview.openDiff', title: 'Open Review Diff', arguments: [this] };
     this.iconPath = new vscode.ThemeIcon(file.status === 'threadOnly' ? 'comment-discussion' : file.status === 'deleted' ? 'diff-removed' : file.status === 'added' ? 'diff-added' : 'diff-modified');
   }

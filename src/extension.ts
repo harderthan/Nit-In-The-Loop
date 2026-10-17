@@ -3,7 +3,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { addReply, addThread, setResolved, type ReviewDocument } from './core/review';
 import { readReview, updateReview } from './core/store';
-import { discoverRepository, getChangesAsync, getHeadContent, getStorePath, getWorkingContent, type ChangedFile } from './core/git';
+import { discoverRepository, getChangesAsync, getHeadContent, getHeadSha, getStorePath, getWorkingContent, type ChangedFile } from './core/git';
 import { prepareThread } from './core/prepareThread';
 import { decodeReviewUri, encodeReviewUri, reviewLocation } from './ui/anchors';
 import { ReviewComments } from './ui/comments';
@@ -12,6 +12,9 @@ import { CoalescedRefresh } from './ui/refreshQueue';
 import { selectRepositoryRoot } from './ui/repositorySelection';
 import { StoreWatchers } from './ui/storeWatchers';
 import { commentableReviewFileFor, reviewFileFor } from './ui/reviewAccess';
+import { getFileBlame } from './core/blame';
+import { getCommitContent, getCommitParent, getCurrentBranch, getRepositoryHistory } from './core/history';
+import { BlameLineItem, BlameTreeProvider, HistoryFileItem, HistoryLoadMoreItem, type HistoryRepository } from './ui/blameTree';
 
 interface RepoState extends ReviewRepository { storePath: string; changedFiles: ChangedFile[] }
 
@@ -19,10 +22,14 @@ export function activate(context: vscode.ExtensionContext): void {
   const states = new Map<string, RepoState>();
   const tree = new ReviewTreeProvider();
   const treeView = vscode.window.createTreeView('agentReview.changes', { treeDataProvider: tree, showCollapseAll: true });
+  const blameTree = new BlameTreeProvider();
+  const blameView = vscode.window.createTreeView('agentReview.blame', { treeDataProvider: blameTree, showCollapseAll: true });
+  blameView.message = 'Open a Git repository to inspect its history.';
   const comments = new ReviewComments(context.extensionUri, (root, file) => {
     return !!commentableReviewFileFor(states, root, file);
   });
   const virtualChanges = new vscode.EventEmitter<vscode.Uri>();
+  let latestBlameRequest = 0;
   const provider = (side: 'old' | 'new'): vscode.TextDocumentContentProvider => ({
     onDidChange: virtualChanges.event,
     provideTextDocumentContent: uri => {
@@ -37,9 +44,27 @@ export function activate(context: vscode.ExtensionContext): void {
       return content;
     },
   });
-  context.subscriptions.push(tree, treeView, comments, virtualChanges,
+  context.subscriptions.push(tree, treeView, blameTree, blameView, comments, virtualChanges,
     vscode.workspace.registerTextDocumentContentProvider('agent-review-old', provider('old')),
-    vscode.workspace.registerTextDocumentContentProvider('agent-review-new', provider('new')));
+    vscode.workspace.registerTextDocumentContentProvider('agent-review-new', provider('new')),
+    vscode.workspace.registerTextDocumentContentProvider('agent-review-blame', {
+      provideTextDocumentContent: uri => {
+        const repoRoot = uri.query;
+        const filePath = uri.path.slice(1);
+        const file = states.get(repoRoot)?.files.find(candidate => (candidate.oldPath ?? candidate.path) === filePath);
+        if (!file || file.binary) return '';
+        return getHeadContent(repoRoot, filePath);
+      },
+    }),
+    vscode.workspace.registerTextDocumentContentProvider('agent-review-history', {
+      provideTextDocumentContent: uri => {
+        let location: { repoRoot: string; hash: string };
+        try { location = JSON.parse(uri.query); } catch { return ''; }
+        if (!location || typeof location.repoRoot !== 'string' || typeof location.hash !== 'string'
+          || !states.has(location.repoRoot) || !location.hash) return '';
+        return getCommitContent(location.repoRoot, location.hash, uri.path.slice(1));
+      },
+    }));
 
   const storeWatchers = new StoreWatchers(storePath => {
     const listener = (current: fs.Stats, previous: fs.Stats) => {
@@ -51,6 +76,15 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(storeWatchers);
 
   const fileFingerprints = new Map<string, string>();
+  const headFingerprints = new Map<string, string>();
+  const historyLimits = new Map<string, number>();
+  async function loadHistory(roots: string[]): Promise<HistoryRepository[]> {
+    return Promise.all(roots.map(async root => {
+      const limit = historyLimits.get(root) ?? 50;
+      const commits = await getRepositoryHistory(root, limit + 1);
+      return { root, commits: commits.slice(0, limit), hasMore: commits.length > limit };
+    }));
+  }
   const refreshQueue = new CoalescedRefresh(async () => {
     const roots = new Set<string>();
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
@@ -61,6 +95,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const storePath = getStorePath(root);
       const changedFiles = await getChangesAsync(root);
       fileFingerprints.set(root, JSON.stringify(changedFiles));
+      headFingerprints.set(root, `${getHeadSha(root)}\0${await getCurrentBranch(root)}`);
       const document = await readReview(storePath);
       const files: ReviewFile[] = [...changedFiles];
       states.set(root, { root, files, changedFiles, threads: document.threads, storePath });
@@ -90,10 +125,17 @@ export function activate(context: vscode.ExtensionContext): void {
       comments.render(root, [], () => '');
       states.delete(root);
       fileFingerprints.delete(root);
+      headFingerprints.delete(root);
+      historyLimits.delete(root);
     }
     storeWatchers.retain([...states.values()].map(state => state.storePath));
     const repositories = [...states.values()];
     tree.setRepositories(repositories);
+    const history = await loadHistory(repositories.map(repository => repository.root));
+    blameTree.setHistory(history);
+    blameView.description = history.length === 1 ? path.basename(history[0].root) : undefined;
+    blameView.message = history.length === 0 ? 'Open a Git repository to inspect its history.'
+      : history.every(repository => repository.commits.length === 0) ? 'No commits in this repository yet.' : undefined;
     treeView.message = repositories.length ? (repositories.every(repo => repo.files.length === 0) ? 'No changed files. Edit a tracked file or create a new one, then refresh.' : undefined) : 'Open a Git repository to review its changes.';
     updateEditorContext();
   });
@@ -139,6 +181,67 @@ export function activate(context: vscode.ExtensionContext): void {
     const title = `${selected.file.oldPath ? `${selected.file.oldPath} → ` : ''}${selected.file.path} (HEAD ↔ Working Tree)`;
     await vscode.commands.executeCommand('vscode.diff', oldUri, newUri, title, { preview: false });
     updateEditorContext();
+  }
+
+  async function showBlame(item?: ChangeItem): Promise<void> {
+    let selected = item;
+    if (!selected) {
+      const active = vscode.window.activeTextEditor?.document.uri;
+      const location = active && decodeReviewUri(active.toString());
+      const root = location?.repoRoot ?? (active?.scheme === 'file'
+        ? selectRepositoryRoot([...states.keys()], undefined, active.fsPath) : undefined);
+      const filePath = location?.path ?? (root && active?.scheme === 'file'
+        ? path.relative(root, active.fsPath).split(path.sep).join('/') : undefined);
+      const file = root && states.get(root)?.files.find(candidate => candidate.path === filePath);
+      if (root && file) selected = new ChangeItem(root, file, 0);
+    }
+    if (!selected) throw new Error('Select a changed file in NITL.');
+    const request = ++latestBlameRequest;
+    if (selected.file.binary) {
+      await vscode.window.showInformationMessage(`${selected.file.path} is binary; line blame is unavailable.`);
+      return;
+    }
+    const filePath = selected.file.oldPath ?? selected.file.path;
+    const commits = await getFileBlame(selected.repoRoot, filePath);
+    if (request !== latestBlameRequest) return;
+    blameTree.setFile(selected.repoRoot, filePath, commits);
+    blameView.description = selected.file.path;
+    blameView.message = commits.length ? undefined : 'No committed lines for this file.';
+    await vscode.commands.executeCommand('agentReview.blame.focus');
+  }
+
+  async function openBlameLine(item: BlameLineItem): Promise<void> {
+    const file = states.get(item.repoRoot)?.files.find(candidate => (candidate.oldPath ?? candidate.path) === item.filePath);
+    if (!file) throw new Error('Refresh Changed Files and select the file again.');
+    if (file.binary) throw new Error('Line blame is unavailable for binary files.');
+    const uri = vscode.Uri.from({
+      scheme: 'agent-review-blame', path: `/${item.filePath}`, query: item.repoRoot,
+      fragment: getHeadSha(item.repoRoot),
+    });
+    const document = await vscode.workspace.openTextDocument(uri);
+    const editor = await vscode.window.showTextDocument(document, { preview: false });
+    const position = new vscode.Position(item.line - 1, 0);
+    editor.selection = new vscode.Selection(position, position);
+    editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
+  }
+
+  function historyUri(repoRoot: string, hash: string, filePath: string): vscode.Uri {
+    return vscode.Uri.from({
+      scheme: 'agent-review-history', path: `/${filePath}`, query: JSON.stringify({ repoRoot, hash }),
+    });
+  }
+
+  async function openHistoryFile(item: HistoryFileItem): Promise<void> {
+    const parent = await getCommitParent(item.repoRoot, item.commit.hash);
+    const oldUri = historyUri(item.repoRoot, parent, item.file.oldPath ?? item.file.path);
+    const newUri = historyUri(item.repoRoot, item.commit.hash, item.file.path);
+    const title = `${item.file.path} (${item.commit.hash.slice(0, 7)})`;
+    await vscode.commands.executeCommand('vscode.diff', oldUri, newUri, title, { preview: false });
+  }
+
+  async function loadMoreHistory(item: HistoryLoadMoreItem): Promise<void> {
+    historyLimits.set(item.repoRoot, (historyLimits.get(item.repoRoot) ?? 50) + 50);
+    await refresh();
   }
 
   async function createThread(input?: vscode.CommentReply): Promise<void> {
@@ -198,6 +301,10 @@ export function activate(context: vscode.ExtensionContext): void {
   }
   context.subscriptions.push(
     command('agentReview.openDiff', openDiff),
+    command('agentReview.showBlame', showBlame),
+    command('agentReview.openBlameLine', openBlameLine),
+    command('agentReview.openHistoryFile', openHistoryFile),
+    command('agentReview.loadMoreHistory', loadMoreHistory),
     command('agentReview.showStale', async (item: UnplacedThreadItem) => {
       const record = item.reviewThread;
       const detail = record.comments.map(comment => `${comment.author}: ${comment.body}`).join('\n\n');
@@ -215,10 +322,14 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   let polling = false;
   async function pollChanges(): Promise<void> {
-    if (polling || refreshQueue.isRunning || !treeView.visible) return;
+    if (polling || refreshQueue.isRunning || (!treeView.visible && !blameView.visible)) return;
     polling = true;
     try {
       for (const root of states.keys()) {
+        if (`${getHeadSha(root)}\0${await getCurrentBranch(root)}` !== headFingerprints.get(root)) {
+          await refresh();
+          break;
+        }
         const next = JSON.stringify(await getChangesAsync(root));
         if (next !== fileFingerprints.get(root)) {
           await refresh();
