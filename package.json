@@ -3,8 +3,8 @@
   "displayName": "NITL",
   "description": "Local line-by-line review threads for Git changes and coding agents",
   "version": "0.1.0",
-  "publisher": "local",
-  "license": "MIT",
+  "publisher": "NickyKim",
+  "license": "Apache-2.0",
   "engines": {
     "vscode": "^1.96.0"
   },
