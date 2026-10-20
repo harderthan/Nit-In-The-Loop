@@ -86,6 +86,8 @@ test('lists the current branch, its upstream, and the default branch but no othe
   const root = mkdtempSync(path.join(tmpdir(), 'nitl-history-clone-'));
   repositories.push(root);
   git(origin, 'clone', '-q', origin, root);
+  git(root, 'config', 'user.name', 'Test');
+  git(root, 'config', 'user.email', 'test@example.com');
   git(root, 'checkout', '-qb', 'topic', 'origin/pushed');
   writeFileSync(path.join(root, 'topic.txt'), 'topic\n');
   const topic = commit(root, 'Topic', 'Alice', '2020-04-01T00:00:00+0000');
