@@ -1,0 +1,29 @@
+name: Publish
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run compile
+      # Publishes only when package.json carries a version the Marketplace does not have yet.
+      - run: npx @vscode/vsce@4.0.0 publish --readme-path MARKETPLACE.md --skip-duplicate
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
