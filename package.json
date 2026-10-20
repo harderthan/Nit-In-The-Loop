@@ -2,7 +2,7 @@
   "name": "nitl",
   "displayName": "NITL",
   "description": "Local line-by-line review threads for Git changes and coding agents",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "NickyKim",
   "license": "Apache-2.0",
   "engines": {
