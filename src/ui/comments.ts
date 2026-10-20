@@ -8,6 +8,7 @@ export interface RenderedThread {
   id: string;
   repoRoot: string;
   thread: vscode.CommentThread;
+  resolved: boolean;
 }
 
 function asComment(comment: ReviewComment, stale: boolean, author: vscode.CommentAuthorInformation): vscode.Comment {
@@ -90,12 +91,17 @@ export class ReviewComments implements vscode.Disposable {
       if (!rendered || rendered.thread.uri.toString() !== uri.toString()) {
         rendered?.thread.dispose();
         const thread = this.controller.createCommentThread(uri, range, comments);
-        thread.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
-        rendered = { id: record.id, repoRoot, thread };
+        rendered = { id: record.id, repoRoot, thread, resolved: !record.resolved };
         this.threads.set(key, rendered);
       } else {
         rendered.thread.range = range;
         rendered.thread.comments = comments;
+      }
+      // Open threads start expanded and resolved ones collapsed. Otherwise the user's choice is kept.
+      if (rendered.resolved !== record.resolved) {
+        rendered.thread.collapsibleState = record.resolved
+          ? vscode.CommentThreadCollapsibleState.Collapsed : vscode.CommentThreadCollapsibleState.Expanded;
+        rendered.resolved = record.resolved;
       }
       rendered.thread.label = body ? `Commit ${record.commit?.slice(0, 7)}`
         : stale ? 'Outdated line · review anchor changed' : `Lines ${record.startLine}${record.endLine !== record.startLine ? `–${record.endLine}` : ''}`;

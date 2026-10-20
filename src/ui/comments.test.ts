@@ -4,7 +4,7 @@ import test from 'node:test';
 import { URI } from 'vscode-uri';
 import type { ReviewThread } from '../core/review';
 
-test('refreshing a replied thread keeps its expanded state', () => {
+test('open threads start expanded, resolved ones collapse, and a refresh keeps the user choice', () => {
   const createdThreads: { collapsibleState: number; comments: unknown[] }[] = [];
   const controller = {
     createCommentThread(uri: URI, range: unknown, comments: unknown[]) {
@@ -35,12 +35,19 @@ test('refreshing a replied thread keeps its expanded state', () => {
     };
     view.render('/repo', [record], () => ({ uri: 'agent-review-new://review/src/example.ts?L3JlcG8', content: 'example' }));
     const rendered = createdThreads[0];
-    assert.equal(rendered.collapsibleState, vscode.CommentThreadCollapsibleState.Collapsed);
+    assert.equal(rendered.collapsibleState, vscode.CommentThreadCollapsibleState.Expanded);
 
-    rendered.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
+    rendered.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
     record.comments.push({ id: 'comment-2', author: 'human', body: 'Will fix', createdAt: '2026-01-01T00:01:00.000Z' });
     view.render('/repo', [record], () => ({ uri: 'agent-review-new://review/src/example.ts?L3JlcG8', content: 'example' }));
     assert.equal(rendered.comments.length, 2);
+    assert.equal(rendered.collapsibleState, vscode.CommentThreadCollapsibleState.Collapsed);
+
+    record.resolved = true;
+    view.render('/repo', [record], () => ({ uri: 'agent-review-new://review/src/example.ts?L3JlcG8', content: 'example' }));
+    assert.equal(rendered.collapsibleState, vscode.CommentThreadCollapsibleState.Collapsed);
+    record.resolved = false;
+    view.render('/repo', [record], () => ({ uri: 'agent-review-new://review/src/example.ts?L3JlcG8', content: 'example' }));
     assert.equal(rendered.collapsibleState, vscode.CommentThreadCollapsibleState.Expanded);
 
     const commit = 'c'.repeat(40);
