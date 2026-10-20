@@ -24,6 +24,8 @@ function asComment(comment: ReviewComment, stale: boolean, author: vscode.Commen
 export class ReviewComments implements vscode.Disposable {
   readonly controller = vscode.comments.createCommentController('agent-review', 'NITL');
   private readonly threads = new Map<string, RenderedThread>();
+  /** `${repoRoot}\0${threadId}` of threads an agent run is answering. */
+  readonly running = new Set<string>();
   private readonly unplaced = new Map<string, Set<string>>();
   private readonly authors: Record<ReviewComment['author'], vscode.CommentAuthorInformation>;
 
@@ -103,8 +105,10 @@ export class ReviewComments implements vscode.Disposable {
           ? vscode.CommentThreadCollapsibleState.Collapsed : vscode.CommentThreadCollapsibleState.Expanded;
         rendered.resolved = record.resolved;
       }
-      rendered.thread.label = body ? `Commit ${record.commit?.slice(0, 7)}`
-        : stale ? 'Outdated line · review anchor changed' : `Lines ${record.startLine}${record.endLine !== record.startLine ? `–${record.endLine}` : ''}`;
+      const queued = record.comments.filter(comment => comment.queued).length;
+      const status = this.running.has(key) ? ' · Agent answering…' : queued ? ` · ${queued} queued` : '';
+      rendered.thread.label = (body ? `Commit ${record.commit?.slice(0, 7)}`
+        : stale ? 'Outdated line · review anchor changed' : `Lines ${record.startLine}${record.endLine !== record.startLine ? `–${record.endLine}` : ''}`) + status;
       rendered.thread.contextValue = record.resolved ? 'resolved' : 'open';
       rendered.thread.state = record.resolved ? vscode.CommentThreadState.Resolved : vscode.CommentThreadState.Unresolved;
       rendered.thread.canReply = record.resolved ? false : this.authors.human;

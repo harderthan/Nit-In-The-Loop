@@ -24,6 +24,20 @@ Reply or resolve the thread inline. Your comments are restored when you reload t
 
 ## Work with an agent
 
+NITL sends your review comments to a coding agent and posts its answers in the threads. Set the agent command in your user settings first. If it is not set, NITL shows an error and keeps your comment queued.
+
+```json
+"agentReview.agentCommand": "claude -p --permission-mode acceptEdits"
+```
+
+NITL runs this command without a shell in the repository root. It sends the review prompt on stdin, or in place of a `{prompt}` argument. The prompt holds each thread's location, code, and conversation. The agent's printed answer becomes its reply. NITL never adds permission flags, so the command decides whether the agent can edit files. The setting is read only from user settings, never from a workspace, and NITL runs the agent only in a trusted workspace.
+
+- **Send to Agent** saves your comment and sends its thread to the agent at once.
+- **Add to Queue** saves your comment without sending it. Choose **Send Queued Comments to Agent** in the NITL view title to send every queued thread in one agent run.
+- **One session per thread.** With `claude`, NITL starts each run with `--session-id` and later resumes that session with `--resume`, so a thread keeps talking to the same session. If the session is gone, NITL starts a new one. Other agents start fresh on each run and read the whole thread from the prompt.
+
+A run stops after 10 minutes or 1 MB of output, and you can cancel it from its notification. If the run fails, no reply is posted and the comments stay queued. The **NITL Agent** output channel shows the agent's error output.
+
 The CLI shares the extension's review store. From this source checkout, use `npm run cli --`:
 
 ```sh
@@ -47,7 +61,7 @@ npm run cli -- threads --repo /path/to/repo --commit 5f3b2c4
 
 For an installed VSIX, choose **Copy NITL CLI Command** from the NITL view title or the Command Palette. It copies a `node <extension>/dist/cli.js files --repo <repository>` command that uses the installed extension, so the source checkout is unnecessary. Replace `files` with another command above and supply its options. The extension refreshes when the CLI changes the review store.
 
-The current release exchanges comments through this CLI. It does not launch Claude, Codex, or another agent from the VS Code UI.
+An agent that works in its own terminal session can also use this CLI to read threads and reply.
 
 ## Review behavior
 

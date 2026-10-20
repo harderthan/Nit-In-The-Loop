@@ -2,7 +2,7 @@
   "name": "nitl",
   "displayName": "NITL",
   "description": "Local line-by-line review threads for Git changes and coding agents",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "publisher": "NickyKim",
   "license": "Apache-2.0",
   "engines": {
@@ -80,12 +80,22 @@
       },
       {
         "command": "agentReview.createThread",
-        "title": "Add Review Comment",
+        "title": "Send to Agent",
+        "enablement": "!commentIsEmpty"
+      },
+      {
+        "command": "agentReview.queueThread",
+        "title": "Add to Queue",
         "enablement": "!commentIsEmpty"
       },
       {
         "command": "agentReview.reply",
-        "title": "Reply to Review Thread",
+        "title": "Send to Agent",
+        "enablement": "!commentIsEmpty"
+      },
+      {
+        "command": "agentReview.queueReply",
+        "title": "Add to Queue",
         "enablement": "!commentIsEmpty"
       },
       {
@@ -104,6 +114,11 @@
         "command": "agentReview.copyCliCommand",
         "title": "Copy NITL CLI Command",
         "icon": "$(copy)"
+      },
+      {
+        "command": "agentReview.sendQueue",
+        "title": "Send Queued Comments to Agent",
+        "icon": "$(send)"
       }
     ],
     "menus": {
@@ -121,6 +136,11 @@
         {
           "command": "agentReview.refresh",
           "when": "view == agentReview.blame",
+          "group": "navigation"
+        },
+        {
+          "command": "agentReview.sendQueue",
+          "when": "view == agentReview.changes || view == agentReview.blame",
           "group": "navigation"
         }
       ],
@@ -146,6 +166,11 @@
           "command": "agentReview.createThread",
           "when": "agentReview.reviewEditor",
           "group": "1_modification"
+        },
+        {
+          "command": "agentReview.queueThread",
+          "when": "agentReview.reviewEditor",
+          "group": "1_modification"
         }
       ],
       "comments/commentThread/context": [
@@ -155,7 +180,17 @@
           "group": "inline"
         },
         {
+          "command": "agentReview.queueThread",
+          "when": "commentController == agent-review && commentThreadIsEmpty",
+          "group": "inline"
+        },
+        {
           "command": "agentReview.reply",
+          "when": "commentController == agent-review && !commentThreadIsEmpty && commentThread == open",
+          "group": "inline"
+        },
+        {
+          "command": "agentReview.queueReply",
           "when": "commentController == agent-review && !commentThreadIsEmpty && commentThread == open",
           "group": "inline"
         }
@@ -171,7 +206,56 @@
           "when": "commentController == agent-review && commentThread == resolved",
           "group": "inline"
         }
+      ],
+      "commandPalette": [
+        {
+          "command": "agentReview.reply",
+          "when": "false"
+        },
+        {
+          "command": "agentReview.queueReply",
+          "when": "false"
+        },
+        {
+          "command": "agentReview.resolve",
+          "when": "false"
+        },
+        {
+          "command": "agentReview.reopen",
+          "when": "false"
+        },
+        {
+          "command": "agentReview.openBlameLine",
+          "when": "false"
+        },
+        {
+          "command": "agentReview.openHistoryFile",
+          "when": "false"
+        },
+        {
+          "command": "agentReview.loadMoreHistory",
+          "when": "false"
+        },
+        {
+          "command": "agentReview.openCommitComments",
+          "when": "false"
+        },
+        {
+          "command": "agentReview.showStale",
+          "when": "false"
+        }
       ]
+    },
+    "configuration": {
+      "title": "NITL",
+      "properties": {
+        "agentReview.agentCommand": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "markdownDescription": "Command that runs your coding agent, for example `claude -p` or `codex exec -`. NITL runs it without a shell in the repository root and sends the review prompt on stdin, or in place of a `{prompt}` argument. The agent's printed answer is posted as its reply. For `claude`, NITL adds `--session-id` or `--resume` so that each thread keeps its session. This setting is read only from user settings, never from a workspace."
+        }
+      }
     }
   },
   "devDependencies": {

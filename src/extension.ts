@@ -1,7 +1,9 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { addReply, addThread, setResolved, type ReviewDocument } from './core/review';
+import { randomUUID } from 'node:crypto';
+import { addAgentReply, addReply, addThread, setResolved, type ReviewDocument } from './core/review';
+import { AgentError, buildAgentPrompt, parseAgentCommand, parseAgentReplies, runAgent, withSession } from './core/agent';
 import { readReview, updateReview } from './core/store';
 import { discoverRepository, getChangesAsync, getHeadContent, getHeadSha, getStorePath, getWorkingContent, type ChangedFile } from './core/git';
 import { prepareCommitThread, prepareThread, UnchangedLinesError } from './core/prepareThread';
@@ -18,6 +20,9 @@ import { BlameLineItem, BlameTreeProvider, HistoryCommitItem, HistoryFileItem, H
 
 interface RepoState extends ReviewRepository { storePath: string; changedFiles: ChangedFile[] }
 
+/** An error whose message the user already saw. */
+class SilentError extends Error {}
+
 export function activate(context: vscode.ExtensionContext): void {
   const states = new Map<string, RepoState>();
   const tree = new ReviewTreeProvider();
@@ -30,6 +35,11 @@ export function activate(context: vscode.ExtensionContext): void {
   }, location => location.side === 'commit' ? Promise.resolve([])
     : getCommitChangedLines(location.repoRoot, location.commit, location.path, location.side).catch(() => []));
   const virtualChanges = new vscode.EventEmitter<vscode.Uri>();
+  const agentLog = vscode.window.createOutputChannel('NITL Agent');
+  // Threads of every kind per repository, and the threads an agent run is answering.
+  const allThreads = new Map<string, ReviewDocument['threads']>();
+  const runningThreads = comments.running;
+  const runningSessions = new Set<string>();
   let latestBlameRequest = 0;
   const provider = (side: 'old' | 'new'): vscode.TextDocumentContentProvider => ({
     onDidChange: virtualChanges.event,
@@ -45,7 +55,7 @@ export function activate(context: vscode.ExtensionContext): void {
       return content;
     },
   });
-  context.subscriptions.push(tree, treeView, blameTree, blameView, comments, virtualChanges,
+  context.subscriptions.push(tree, treeView, blameTree, blameView, comments, virtualChanges, agentLog,
     vscode.workspace.registerTextDocumentContentProvider('agent-review-old', provider('old')),
     vscode.workspace.registerTextDocumentContentProvider('agent-review-new', provider('new')),
     vscode.workspace.registerTextDocumentContentProvider('agent-review-blame', {
@@ -98,6 +108,7 @@ export function activate(context: vscode.ExtensionContext): void {
       fileFingerprints.set(root, JSON.stringify(changedFiles));
       headFingerprints.set(root, `${getHeadSha(root)}\0${await getCurrentBranch(root)}`);
       const document = await readReview(storePath);
+      allThreads.set(root, document.threads);
       const working = document.threads.filter(record => !record.commit);
       const commitPlacements = await placeCommitThreads(root, document.threads.filter(record => record.commit));
       const files: ReviewFile[] = [...changedFiles];
@@ -158,6 +169,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   function showError(error: unknown): void {
+    if (error instanceof SilentError) return;
     void vscode.window.showErrorMessage(`NITL: ${error instanceof Error ? error.message : String(error)}`);
   }
 
@@ -275,7 +287,7 @@ export function activate(context: vscode.ExtensionContext): void {
     await refresh();
   }
 
-  async function createThread(input?: vscode.CommentReply): Promise<void> {
+  async function createThread(input?: vscode.CommentReply, queue = false): Promise<void> {
     const native = input && 'thread' in input && 'text' in input ? input : undefined;
     const editor = vscode.window.activeTextEditor;
     const uri = native?.thread.uri ?? editor?.document.uri;
@@ -283,7 +295,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!uri || !range) throw new Error('Open a review diff and select a line.');
     const history = decodeHistoryUri(uri.toString());
     if (history) {
-      await createCommitThread(history, range, native);
+      await createCommitThread(history, range, native, queue);
       return;
     }
     const location = decodeReviewUri(uri.toString());
@@ -295,22 +307,27 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!body?.trim()) return;
     const { startLine, endLine } = reviewLocation(range.start.line, range.start.character, range.end.line, range.end.character);
     const thread = prepareThread(location.repoRoot, state.changedFiles, {
-      path: location.path, side: location.side, startLine, endLine, author: 'human', body,
+      path: location.path, side: location.side, startLine, endLine, author: 'human', body, queued: true,
     });
-    await mutate(location.repoRoot, document => {
-      addThread(document, thread);
-    });
+    await saveThread(location.repoRoot, thread, native, queue);
+  }
+
+  /** Every reviewer comment starts queued. Send dispatches its thread to the agent right away. */
+  async function saveThread(root: string, thread: Parameters<typeof addThread>[1], native: vscode.CommentReply | undefined, queue: boolean): Promise<void> {
+    let id = '';
+    await mutate(root, document => { id = addThread(document, thread).id; });
     if (native) native.thread.dispose();
+    if (!queue) await sendToAgent(root, [id]);
   }
 
   async function createCommitThread(
-    location: HistoryLocation, range: vscode.Range, native?: vscode.CommentReply,
+    location: HistoryLocation, range: vscode.Range, native: vscode.CommentReply | undefined, queue: boolean,
   ): Promise<void> {
     if (!states.has(location.repoRoot)) throw new Error('Open the commit from NITL Git Blame.');
     const body = native?.text ?? await vscode.window.showInputBox({ title: 'Add Review Comment', prompt: 'Comment on this commit', ignoreFocusOut: true });
     if (!body?.trim()) return;
     const { startLine, endLine } = reviewLocation(range.start.line, range.start.character, range.end.line, range.end.character);
-    const request = { author: 'human' as const, body };
+    const request = { author: 'human' as const, body, queued: true };
     let thread;
     if (location.side === 'commit') {
       thread = await prepareCommitThread(location.repoRoot, location.commit, request);
@@ -325,16 +342,111 @@ export function activate(context: vscode.ExtensionContext): void {
         void vscode.window.showInformationMessage(`${location.path} ${lines} is unchanged in this commit, so NITL added the comment to the commit body.`);
       }
     }
-    await mutate(location.repoRoot, document => { addThread(document, thread); });
-    if (native) native.thread.dispose();
+    await saveThread(location.repoRoot, thread, native, queue);
   }
 
-  async function reply(input: vscode.CommentReply): Promise<void> {
+  async function reply(input: vscode.CommentReply, queue = false): Promise<void> {
     const target = comments.idForThread(input.thread);
     if (!target) throw new Error('Select an existing review thread.');
     if (!input.text?.trim()) return;
-    await mutate(target.repoRoot, document => { addReply(document, target.id, { author: 'human', body: input.text }); });
+    await mutate(target.repoRoot, document => { addReply(document, target.id, { author: 'human', body: input.text, queued: true }); });
+    if (!queue) await sendToAgent(target.repoRoot, [target.id]);
   }
+
+  async function sendQueue(): Promise<void> {
+    if (states.size === 0) await refresh();
+    const batches = [...states.values()].map(state => ({
+      root: state.root,
+      ids: allThreads.get(state.root)?.filter(thread => !thread.resolved && thread.comments.some(comment => comment.queued)).map(thread => thread.id) ?? [],
+    })).filter(batch => batch.ids.length);
+    if (batches.length === 0) {
+      await vscode.window.showInformationMessage('No queued comments to send.');
+      return;
+    }
+    const argv = agentCommand();
+    await Promise.all(batches.map(batch => sendToAgent(batch.root, batch.ids, argv)));
+  }
+
+  function agentCommand(): string[] {
+    const command = vscode.workspace.getConfiguration('agentReview').get<string>('agentCommand', '').trim();
+    if (!command) {
+      void vscode.window.showErrorMessage('NITL: Set agentReview.agentCommand, for example "claude -p". Your comment stays queued until you send it.', 'Open Settings')
+        .then(choice => { if (choice) void vscode.commands.executeCommand('workbench.action.openSettings', 'agentReview.agentCommand'); });
+      throw new SilentError();
+    }
+    if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace before NITL runs the agent in it.');
+    return parseAgentCommand(command);
+  }
+
+  /**
+   * Send open threads to the agent in one run. Threads that one session already
+   * answered resume it, so a thread keeps talking to the same agent session.
+   */
+  async function sendToAgent(root: string, threadIds: string[], argv = agentCommand()): Promise<void> {
+    // Claim the threads before any await, so a second send cannot run them twice.
+    const claimed = threadIds.filter(id => !runningThreads.has(`${root}\0${id}`));
+    for (const id of claimed) runningThreads.add(`${root}\0${id}`);
+    if (claimed.length < threadIds.length) {
+      void vscode.window.showInformationMessage('NITL: The agent is still answering this thread. Your comment is queued. Send it after the answer arrives.');
+    }
+    let session: string | undefined;
+    try {
+      const document = await readReview(states.get(root)?.storePath ?? getStorePath(root));
+      const threads = claimed.map(id => document.threads.find(thread => thread.id === id))
+        .filter((thread): thread is ReviewDocument['threads'][number] => !!thread && !thread.resolved);
+      if (threads.length === 0) return;
+      const answered = new Set(threads.flatMap(thread => thread.comments.map(comment => comment.id)));
+      const sessions = new Set(threads.map(thread => thread.agentSession));
+      const shared = sessions.size === 1 ? threads[0].agentSession : undefined;
+      // Two runs must not resume one session at once, so a busy session gives way to a new one.
+      const previous = shared && !runningSessions.has(shared) ? shared : undefined;
+      await refresh();
+      const prompt = buildAgentPrompt(root, threads);
+      const env = { ...process.env, NITL_REPO: root, NITL_THREAD_IDS: threads.map(thread => thread.id).join(',') };
+      const title = threads.length === 1 ? 'NITL: Agent is answering the thread' : `NITL: Agent is answering ${threads.length} threads`;
+      const output = await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title, cancellable: true },
+        async (_progress, token) => {
+          const controller = new AbortController();
+          token.onCancellationRequested(() => controller.abort());
+          const attempt = (id: string, resume: boolean) => {
+            session = id;
+            runningSessions.add(id);
+            return runAgent({ argv: withSession(argv, { id, resume }), prompt, cwd: root, env, signal: controller.signal });
+          };
+          if (!previous) return attempt(randomUUID(), false);
+          try {
+            return await attempt(previous, true);
+          } catch (error) {
+            // Only a session that the agent no longer has starts over. Any other failure is reported.
+            if (!(error instanceof AgentError) || !/no conversation found/i.test(error.stderr)) throw error;
+            runningSessions.delete(previous);
+            agentLog.appendLine(`Session ${previous} is gone. Starting a new session.`);
+            return attempt(randomUUID(), false);
+          }
+        });
+      agentLog.appendLine(`Agent output for ${threads.map(thread => thread.id).join(', ')}:\n${output}`);
+      const replies = parseAgentReplies(output, threads.map(thread => thread.id));
+      await mutate(root, current => {
+        for (const [id, body] of replies) {
+          if (current.threads.some(thread => thread.id === id)) addAgentReply(current, id, body, answered, session);
+        }
+      });
+      const missing = threads.filter(thread => !replies.has(thread.id));
+      if (missing.length) {
+        void vscode.window.showWarningMessage(`NITL: The agent did not answer ${missing.length} thread(s). Their comments stay queued.`, 'Show Output')
+          .then(choice => { if (choice) agentLog.show(); });
+      }
+    } catch (error) {
+      if (error instanceof AgentError && error.stderr) agentLog.appendLine(`${error.message}\n${error.stderr}`);
+      throw error;
+    } finally {
+      for (const id of claimed) runningThreads.delete(`${root}\0${id}`);
+      if (session) runningSessions.delete(session);
+      await refresh();
+    }
+  }
+
 
   async function changeResolution(thread: vscode.CommentThread, resolved: boolean): Promise<void> {
     const target = comments.idForThread(thread);
@@ -375,8 +487,11 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     command('agentReview.refresh', refresh),
     command('agentReview.copyCliCommand', copyCliCommand),
-    command('agentReview.createThread', createThread),
-    command('agentReview.reply', reply),
+    command('agentReview.createThread', input => createThread(input)),
+    command('agentReview.queueThread', input => createThread(input, true)),
+    command('agentReview.reply', input => reply(input)),
+    command('agentReview.queueReply', input => reply(input, true)),
+    command('agentReview.sendQueue', sendQueue),
     command('agentReview.resolve', thread => changeResolution(thread, true)),
     command('agentReview.reopen', thread => changeResolution(thread, false)),
     vscode.window.onDidChangeActiveTextEditor(updateEditorContext),

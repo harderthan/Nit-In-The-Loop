@@ -8,6 +8,8 @@ export interface ReviewComment {
   author: Author;
   body: string;
   createdAt: string;
+  /** A reviewer comment waiting to be sent to the agent. */
+  queued?: boolean;
 }
 
 export interface ReviewThread {
@@ -20,6 +22,8 @@ export interface ReviewThread {
   anchorText: string;
   /** Set for a comment on a commit. An empty path makes it a commit body comment. */
   commit?: string;
+  /** The agent session that last answered this thread. */
+  agentSession?: string;
   stale: boolean;
   resolved: boolean;
   comments: ReviewComment[];
@@ -42,11 +46,13 @@ export interface NewThread {
   commit?: string;
   author: Author;
   body: string;
+  queued?: boolean;
 }
 
 export interface NewReply {
   author: Author;
   body: string;
+  queued?: boolean;
 }
 
 export function addThread(review: ReviewDocument, input: NewThread): ReviewThread {
@@ -90,6 +96,17 @@ export function setResolved(review: ReviewDocument, threadId: string, resolved: 
   return thread;
 }
 
+/**
+ * Post an agent's answer, mark the comments it answered as sent, and remember the
+ * session. Comments queued while the agent ran stay queued.
+ */
+export function addAgentReply(review: ReviewDocument, threadId: string, body: string, answered: ReadonlySet<string>, session?: string): ReviewComment {
+  const thread = requireThread(review, threadId);
+  for (const comment of thread.comments) if (answered.has(comment.id)) delete comment.queued;
+  if (session) thread.agentSession = session;
+  return addReply(review, threadId, { author: 'agent', body });
+}
+
 function newComment(input: NewReply): ReviewComment {
   if (input.author !== 'human' && input.author !== 'agent') {
     throw new Error('Invalid comment author');
@@ -97,7 +114,10 @@ function newComment(input: NewReply): ReviewComment {
   if (typeof input.body !== 'string' || input.body.trim().length === 0) {
     throw new Error('Comment body is required');
   }
-  return { id: randomUUID(), author: input.author, body: input.body, createdAt: new Date().toISOString() };
+  return {
+    id: randomUUID(), author: input.author, body: input.body, createdAt: new Date().toISOString(),
+    ...(input.queued ? { queued: true } : {}),
+  };
 }
 
 function requireThread(review: ReviewDocument, id: string): ReviewThread {

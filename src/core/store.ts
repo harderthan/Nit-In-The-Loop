@@ -138,6 +138,7 @@ function validThread(value: unknown): value is ReviewThread {
     && Number.isSafeInteger(value.endLine) && (value.endLine as number) >= (value.startLine as number)
     && typeof value.baseCommit === 'string'
     && typeof value.anchorText === 'string'
+    && (value.agentSession === undefined || (typeof value.agentSession === 'string' && value.agentSession.length > 0))
     && typeof value.stale === 'boolean'
     && typeof value.resolved === 'boolean'
     && Array.isArray(value.comments) && value.comments.length > 0 && value.comments.every(validComment);
@@ -148,7 +149,8 @@ function validComment(value: unknown): value is ReviewComment {
   return typeof value.id === 'string' && value.id.length > 0
     && (value.author === 'human' || value.author === 'agent')
     && typeof value.body === 'string' && value.body.trim().length > 0
-    && typeof value.createdAt === 'string' && !Number.isNaN(Date.parse(value.createdAt));
+    && typeof value.createdAt === 'string' && !Number.isNaN(Date.parse(value.createdAt))
+    && (value.queued === undefined || typeof value.queued === 'boolean');
 }
 
 function record(value: unknown): value is Record<string, unknown> {

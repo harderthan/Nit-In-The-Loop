@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { addReply, addThread, setResolved, type ReviewDocument } from './review';
+import { addAgentReply, addReply, addThread, setResolved, type ReviewDocument } from './review';
 
 const empty = (): ReviewDocument => ({ version: 1, threads: [] });
 
@@ -82,4 +82,20 @@ test('addThread rejects invalid persisted fields before changing the document', 
   assert.throws(() => addThread(review, { ...input, baseCommit: null as unknown as string }), /base commit/i);
   assert.throws(() => addThread(review, { ...input, anchorText: null as unknown as string }), /anchor text/i);
   assert.deepEqual(review, empty());
+});
+
+test('an agent reply marks only the comments it answered as sent and keeps its session', () => {
+  const review: ReviewDocument = { version: 1, threads: [] };
+  const thread = addThread(review, {
+    path: 'a.ts', side: 'new', startLine: 1, endLine: 1, baseCommit: '', anchorText: 'a', author: 'human', body: 'First', queued: true,
+  });
+  const answered = new Set(thread.comments.map(comment => comment.id));
+  const later = addReply(review, thread.id, { author: 'human', body: 'While it ran', queued: true });
+  thread.resolved = true;
+  const reply = addAgentReply(review, thread.id, 'Answer', answered, 'session-1');
+  assert.equal(reply.author, 'agent');
+  assert.equal(thread.comments[0].queued, undefined);
+  assert.equal(later.queued, true);
+  assert.equal(thread.agentSession, 'session-1');
+  assert.equal(thread.resolved, false);
 });

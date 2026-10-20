@@ -3,7 +3,7 @@ import { getHeadContent, getHeadSha, getWorkingContent, type ChangedFile } from 
 import { BINARY_PREVIEW, getCommitChangedLines, getCommitContent, getCommitParent, rangeIsChanged, resolveCommit } from './history';
 import type { NewThread } from './review';
 
-type ThreadRequest = Pick<NewThread, 'path' | 'side' | 'startLine' | 'endLine' | 'author' | 'body'>;
+type ThreadRequest = Pick<NewThread, 'path' | 'side' | 'startLine' | 'endLine' | 'author' | 'body' | 'queued'>;
 
 /** Bind a requested comment to a specific changed-file snapshot and its current content. */
 export function prepareThread(repoRoot: string, changes: readonly ChangedFile[], request: ThreadRequest): NewThread {
@@ -31,8 +31,9 @@ export async function prepareCommitThread(
   repoRoot: string, commit: string, request: Pick<NewThread, 'author' | 'body'> & Partial<ThreadRequest>,
 ): Promise<NewThread> {
   const hash = await resolveCommit(repoRoot, commit);
+  const comment = { author: request.author, body: request.body, ...(request.queued ? { queued: true } : {}) };
   if (!request.path) {
-    return { path: '', side: 'new', startLine: 1, endLine: 1, baseCommit: hash, anchorText: '', commit: hash, author: request.author, body: request.body };
+    return { path: '', side: 'new', startLine: 1, endLine: 1, baseCommit: hash, anchorText: '', commit: hash, ...comment };
   }
   const { path, side, startLine = 0, endLine = 0 } = request;
   if (side !== 'old' && side !== 'new') throw new Error('--side must be old or new');
@@ -47,7 +48,7 @@ export async function prepareCommitThread(
   if (content === BINARY_PREVIEW) throw new Error(`Cannot comment on binary file: ${path}`);
   return {
     path, side, startLine, endLine, baseCommit: hash,
-    anchorText: anchorText(reviewLines(content), startLine, endLine), commit: hash, author: request.author, body: request.body,
+    anchorText: anchorText(reviewLines(content), startLine, endLine), commit: hash, ...comment,
   };
 }
 
