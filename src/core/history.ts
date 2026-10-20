@@ -62,13 +62,23 @@ export async function getRepositoryHistory(repoRoot: string, limit = 50): Promis
   }
 
   const currentBranch = await getCurrentBranch(repoRoot);
-  const refs = (await git(repoRoot, [
+  const allRefs = (await git(repoRoot, [
     'for-each-ref', '--format=%(refname)%00%(refname:short)%00%(objectname)',
     'refs/heads', 'refs/remotes',
   ])).trimEnd().split('\n').filter(Boolean).map(line => {
     const [ref, name, hash] = line.split('\0');
     return { ref, name, hash };
   }).filter(({ ref }) => !ref.endsWith('/HEAD'));
+  // Every ref in a large repository buries HEAD under unrelated work and costs a
+  // walk each, so show only the current branch, its upstream, and the default branch.
+  const defaultRef = await optionalRef(repoRoot, ['symbolic-ref', '-q', 'refs/remotes/origin/HEAD'])
+    || ['refs/remotes/origin/main', 'refs/remotes/origin/master'].find(ref => allRefs.some(item => item.ref === ref));
+  const scope = new Set([
+    currentBranch && `refs/heads/${currentBranch}`,
+    await optionalRef(repoRoot, ['rev-parse', '--symbolic-full-name', '@{upstream}']),
+    defaultRef,
+  ]);
+  const refs = allRefs.filter(({ ref }) => scope.has(ref));
   if (!head && refs.length === 0) return [];
 
   const cacheKey = `${repoRoot}\0${limit}`;
@@ -82,10 +92,16 @@ export async function getRepositoryHistory(repoRoot: string, limit = 50): Promis
     return leftPriority - rightPriority || left.name.localeCompare(right.name);
   });
 
-  const fields = (await git(repoRoot, [
-    'log', '-z', `--max-count=${limit}`, '--format=%H%x00%an%x00%aI%x00%s',
-    ...(head ? ['HEAD'] : []), ...refs.map(({ ref }) => ref),
-  ])).split('\0');
+  // Commits the default branch lacks come first, so the current branch's own work
+  // leads even when the default branch has moved on since it forked.
+  const tips = [...(head ? ['HEAD'] : []), ...refs.filter(({ ref }) => ref !== defaultRef).map(({ ref }) => ref)];
+  const base = refs.some(({ ref }) => ref === defaultRef) ? defaultRef : undefined;
+  const log = (count: number, revisions: string[]) => count > 0 && revisions.length > 0
+    ? git(repoRoot, ['log', '-z', `--max-count=${count}`, '--format=%H%x00%an%x00%aI%x00%s', ...revisions, '--'])
+    : Promise.resolve('');
+  const own = (await log(limit, base ? [...tips, `^${base}`] : tips)).split('\0');
+  own.pop();
+  const fields = [...own, ...(await log(limit - own.length / 4, base ? [base] : [])).split('\0')];
   fields.pop();
   const commits: HistoryCommit[] = [];
   for (let i = 0; i < fields.length; i += 4) {
@@ -123,6 +139,14 @@ export async function getRepositoryHistory(repoRoot: string, limit = 50): Promis
     if (oldest !== undefined) historyCache.delete(oldest);
   }
   return copyCommits(commits);
+}
+
+async function optionalRef(repoRoot: string, args: string[]): Promise<string> {
+  try {
+    return (await git(repoRoot, args)).trim();
+  } catch {
+    return '';
+  }
 }
 
 export async function getCurrentBranch(repoRoot: string): Promise<string> {

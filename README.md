@@ -7,7 +7,7 @@ Review local Git changes with line comments inside VS Code. Open a diff, share a
 ## What you can do
 
 - **Review the working tree.** See staged, unstaged, untracked, deleted, and renamed files against `HEAD` in VS Code's native diff editor.
-- **Inspect Git history.** The Git Blame view lists recent commits across branches, marks branch tips and `HEAD`, and colors commits by branch. Expand a commit to see its changed files and open a diff. Choose **Show Git Blame** on a changed file to inspect its committed lines.
+- **Inspect Git history.** The Git Blame view lists recent commits of the current branch, its upstream, and the remote default branch. Commits that the default branch does not have come first. It marks branch tips and `HEAD`, and colors commits by branch. Expand a commit to see its changed files and open a diff. Choose **Show Git Blame** on a changed file to inspect its committed lines.
 - **Comment on exact lines.** Start a thread on either side of the diff, reply inline, and resolve or reopen it. Threads also appear in the Comments panel.
 - **Exchange comments with an agent.** The bundled CLI lets any agent that can run a command list files and threads, add comments, reply, and change thread status. CLI updates appear in VS Code automatically.
 - **Keep reviews local.** Threads are stored in `agent-review/review.json` under the repository's Git directory, outside the source tree. The extension and CLI need no account or API key.

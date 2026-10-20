@@ -68,45 +68,52 @@ test('lists repository commits newest first with author, date, subject, and limi
   assert.deepEqual(await getCommitFiles(root, second), [{ path: 'a.txt', status: 'modified' }]);
 });
 
-test('lists diverged branches and attributes shared ancestors to the current branch', async () => {
-  const root = repository();
-  writeFileSync(path.join(root, 'base.txt'), 'base\n');
-  const base = commit(root, 'Base', 'Alice', '2020-01-01T00:00:00+0000');
-  const main = git(root, 'branch', '--show-current');
-  git(root, 'checkout', '-qb', 'feature');
-  writeFileSync(path.join(root, 'feature.txt'), 'feature\n');
-  const feature = commit(root, 'Feature', 'Alice', '2020-03-01T00:00:00+0000');
-  git(root, 'checkout', '-q', main);
-  writeFileSync(path.join(root, 'main.txt'), 'main\n');
-  const mainTip = commit(root, 'Main', 'Bob', '2020-02-01T00:00:00+0000');
+test('lists the current branch, its upstream, and the default branch but no other branch', async () => {
+  const origin = repository();
+  writeFileSync(path.join(origin, 'base.txt'), 'base\n');
+  const base = commit(origin, 'Base', 'Alice', '2020-01-01T00:00:00+0000');
+  const main = git(origin, 'branch', '--show-current');
+  git(origin, 'checkout', '-qb', 'pushed');
+  writeFileSync(path.join(origin, 'pushed.txt'), 'pushed\n');
+  const pushed = commit(origin, 'Pushed', 'Alice', '2020-03-01T00:00:00+0000');
+  git(origin, 'checkout', '-qb', 'unrelated', base);
+  writeFileSync(path.join(origin, 'unrelated.txt'), 'unrelated\n');
+  commit(origin, 'Unrelated', 'Bob', '2020-05-01T00:00:00+0000');
+  git(origin, 'checkout', '-q', main);
+  writeFileSync(path.join(origin, 'main.txt'), 'main\n');
+  const mainTip = commit(origin, 'Main', 'Bob', '2020-06-01T00:00:00+0000');
 
-  assert.equal(await getCurrentBranch(root), main);
+  const root = mkdtempSync(path.join(tmpdir(), 'nitl-history-clone-'));
+  repositories.push(root);
+  git(origin, 'clone', '-q', origin, root);
+  git(root, 'checkout', '-qb', 'topic', 'origin/pushed');
+  writeFileSync(path.join(root, 'topic.txt'), 'topic\n');
+  const topic = commit(root, 'Topic', 'Alice', '2020-04-01T00:00:00+0000');
+
+  assert.equal(await getCurrentBranch(root), 'topic');
   assert.deepEqual((await getRepositoryHistory(root)).map(({ hash, refs, branch }) => ({ hash, refs, branch })), [
-    { hash: feature, refs: ['feature'], branch: 'feature' },
-    { hash: mainTip, refs: ['HEAD', main], branch: main },
-    { hash: base, refs: [], branch: main },
+    { hash: topic, refs: ['HEAD', 'topic'], branch: 'topic' },
+    { hash: pushed, refs: ['origin/pushed'], branch: 'topic' },
+    { hash: mainTip, refs: [`origin/${main}`], branch: `origin/${main}` },
+    { hash: base, refs: [], branch: 'topic' },
   ]);
-  assert.deepEqual((await getRepositoryHistory(root, 1)).map(({ hash, refs, branch }) => ({ hash, refs, branch })), [
-    { hash: feature, refs: ['feature'], branch: 'feature' },
-  ]);
+  assert.deepEqual((await getRepositoryHistory(root, 1)).map(({ hash }) => hash), [topic]);
 });
 
-test('labels a detached HEAD and retains branch attribution for reachable commits', async () => {
+test('lists only a detached HEAD when it has no upstream or default branch', async () => {
   const root = repository();
   writeFileSync(path.join(root, 'base.txt'), 'base\n');
   const base = commit(root, 'Base', 'Alice', '2020-01-01T00:00:00+0000');
-  const branch = git(root, 'branch', '--show-current');
   writeFileSync(path.join(root, 'branch.txt'), 'branch\n');
-  const tip = commit(root, 'Tip', 'Bob', '2020-02-01T00:00:00+0000');
+  commit(root, 'Tip', 'Bob', '2020-02-01T00:00:00+0000');
   git(root, 'checkout', '--detach', '-q', base);
   writeFileSync(path.join(root, 'detached.txt'), 'detached\n');
   const detached = commit(root, 'Detached', 'Alice', '2020-03-01T00:00:00+0000');
 
   assert.equal(await getCurrentBranch(root), '');
-  assert.deepEqual((await getRepositoryHistory(root)).map(({ hash, refs, branch: owner }) => ({ hash, refs, branch: owner })), [
+  assert.deepEqual((await getRepositoryHistory(root)).map(({ hash, refs, branch }) => ({ hash, refs, branch })), [
     { hash: detached, refs: ['HEAD'], branch: 'HEAD' },
-    { hash: tip, refs: [branch], branch },
-    { hash: base, refs: [], branch: branch },
+    { hash: base, refs: [], branch: 'HEAD' },
   ]);
 });
 
@@ -128,10 +135,10 @@ test('reuses unchanged history and refreshes labels when refs or the current bra
     assert.equal(ancestryWalks(), firstWalks);
 
     git(root, 'branch', 'other');
-    assert.deepEqual((await getRepositoryHistory(root))[0].refs, ['HEAD', main, 'other']);
+    assert.deepEqual((await getRepositoryHistory(root))[0].refs, ['HEAD', main]);
     git(root, 'checkout', '-q', 'other');
     const switched = (await getRepositoryHistory(root))[0];
-    assert.deepEqual(switched.refs, ['HEAD', 'other', main]);
+    assert.deepEqual(switched.refs, ['HEAD', 'other']);
     assert.equal(switched.branch, 'other');
   } finally {
     if (previousTrace === undefined) delete process.env.GIT_TRACE;
