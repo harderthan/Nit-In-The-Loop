@@ -4,8 +4,8 @@ import * as path from 'node:path';
 import { addReply, addThread, setResolved, type ReviewDocument } from './core/review';
 import { readReview, updateReview } from './core/store';
 import { discoverRepository, getChangesAsync, getHeadContent, getHeadSha, getStorePath, getWorkingContent, type ChangedFile } from './core/git';
-import { prepareThread } from './core/prepareThread';
-import { decodeReviewUri, encodeReviewUri, reviewLocation } from './ui/anchors';
+import { prepareCommitThread, prepareThread, UnchangedLinesError } from './core/prepareThread';
+import { decodeHistoryUri, decodeReviewUri, encodeHistoryUri, encodeReviewUri, reviewLocation, type HistoryLocation } from './ui/anchors';
 import { ReviewComments } from './ui/comments';
 import { ChangeItem, UnplacedThreadItem, ReviewTreeProvider, type ReviewRepository, type ReviewFile } from './ui/reviewTree';
 import { CoalescedRefresh } from './ui/refreshQueue';
@@ -13,8 +13,8 @@ import { selectRepositoryRoot } from './ui/repositorySelection';
 import { StoreWatchers } from './ui/storeWatchers';
 import { commentableReviewFileFor, reviewFileFor } from './ui/reviewAccess';
 import { getFileBlame } from './core/blame';
-import { getCommitContent, getCommitParent, getCurrentBranch, getRepositoryHistory } from './core/history';
-import { BlameLineItem, BlameTreeProvider, HistoryFileItem, HistoryLoadMoreItem, type HistoryRepository } from './ui/blameTree';
+import { getCommitChangedLines, getCommitContent, getCommitParent, getCommitSummary, getCurrentBranch, getRepositoryHistory } from './core/history';
+import { BlameLineItem, BlameTreeProvider, HistoryCommitItem, HistoryFileItem, HistoryLoadMoreItem, type HistoryRepository } from './ui/blameTree';
 
 interface RepoState extends ReviewRepository { storePath: string; changedFiles: ChangedFile[] }
 
@@ -26,8 +26,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const blameView = vscode.window.createTreeView('agentReview.blame', { treeDataProvider: blameTree, showCollapseAll: true });
   blameView.message = 'Open a Git repository to inspect its history.';
   const comments = new ReviewComments(context.extensionUri, (root, file) => {
-    return !!commentableReviewFileFor(states, root, file);
-  });
+    return file ? !!commentableReviewFileFor(states, root, file) : states.has(root);
+  }, location => location.side === 'commit' ? Promise.resolve([])
+    : getCommitChangedLines(location.repoRoot, location.commit, location.path, location.side).catch(() => []));
   const virtualChanges = new vscode.EventEmitter<vscode.Uri>();
   let latestBlameRequest = 0;
   const provider = (side: 'old' | 'new'): vscode.TextDocumentContentProvider => ({
@@ -57,12 +58,12 @@ export function activate(context: vscode.ExtensionContext): void {
       },
     }),
     vscode.workspace.registerTextDocumentContentProvider('agent-review-history', {
-      provideTextDocumentContent: uri => {
-        let location: { repoRoot: string; hash: string };
-        try { location = JSON.parse(uri.query); } catch { return ''; }
-        if (!location || typeof location.repoRoot !== 'string' || typeof location.hash !== 'string'
-          || !states.has(location.repoRoot) || !location.hash) return '';
-        return getCommitContent(location.repoRoot, location.hash, uri.path.slice(1));
+      provideTextDocumentContent: async uri => {
+        const location = decodeHistoryUri(uri.toString());
+        if (!location || !states.has(location.repoRoot)) return '';
+        if (location.side === 'commit') return getCommitSummary(location.repoRoot, location.commit);
+        const hash = location.side === 'new' ? location.commit : await getCommitParent(location.repoRoot, location.commit);
+        return hash ? getCommitContent(location.repoRoot, hash, location.path) : '';
       },
     }));
 
@@ -97,23 +98,28 @@ export function activate(context: vscode.ExtensionContext): void {
       fileFingerprints.set(root, JSON.stringify(changedFiles));
       headFingerprints.set(root, `${getHeadSha(root)}\0${await getCurrentBranch(root)}`);
       const document = await readReview(storePath);
+      const working = document.threads.filter(record => !record.commit);
+      const commitPlacements = await placeCommitThreads(root, document.threads.filter(record => record.commit));
       const files: ReviewFile[] = [...changedFiles];
-      states.set(root, { root, files, changedFiles, threads: document.threads, storePath });
+      states.set(root, { root, files, changedFiles, threads: working, storePath });
       storeWatchers.ensure(storePath);
-      for (const record of document.threads) {
+      for (const record of working) {
         // Persisted comments remain visible after the file leaves the changed-file list.
         if (!files.some(file => file.path === record.path)) files.push({ path: record.path, status: 'threadOnly' });
       }
       const contentCache = new Map<string, string>();
       comments.render(root, document.threads, record => {
+        const placed = commitPlacements.get(record.id);
+        if (placed) return placed;
+        const uri = encodeReviewUri(record.side, root, record.path);
         const key = `${record.side}\0${record.path}`;
         const cached = contentCache.get(key);
-        if (cached !== undefined) return cached;
+        if (cached !== undefined) return { uri, content: cached };
         let content: string;
         try { content = record.side === 'old' ? getHeadContent(root, record.path) : getWorkingContent(root, record.path); }
         catch { content = ''; }
         contentCache.set(key, content);
-        return content;
+        return { uri, content };
       });
       states.get(root)!.unplacedIds = comments.unplacedIds(root);
       for (const file of files) {
@@ -122,7 +128,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }
     for (const root of states.keys()) if (!roots.has(root)) {
-      comments.render(root, [], () => '');
+      comments.render(root, [], () => ({ uri: '', content: '' }));
       states.delete(root);
       fileFingerprints.delete(root);
       headFingerprints.delete(root);
@@ -147,7 +153,8 @@ export function activate(context: vscode.ExtensionContext): void {
     const uri = vscode.window.activeTextEditor?.document.uri;
     const location = uri && decodeReviewUri(uri.toString());
     const file = location && commentableReviewFileFor(states, location.repoRoot, location.path);
-    void vscode.commands.executeCommand('setContext', 'agentReview.reviewEditor', !!file);
+    const history = uri && decodeHistoryUri(uri.toString());
+    void vscode.commands.executeCommand('setContext', 'agentReview.reviewEditor', !!file || !!(history && states.has(history.repoRoot)));
   }
 
   function showError(error: unknown): void {
@@ -225,18 +232,42 @@ export function activate(context: vscode.ExtensionContext): void {
     editor.revealRange(new vscode.Range(position, position), vscode.TextEditorRevealType.InCenter);
   }
 
-  function historyUri(repoRoot: string, hash: string, filePath: string): vscode.Uri {
-    return vscode.Uri.from({
-      scheme: 'agent-review-history', path: `/${filePath}`, query: JSON.stringify({ repoRoot, hash }),
-    });
-  }
-
   async function openHistoryFile(item: HistoryFileItem): Promise<void> {
-    const parent = await getCommitParent(item.repoRoot, item.commit.hash);
-    const oldUri = historyUri(item.repoRoot, parent, item.file.oldPath ?? item.file.path);
-    const newUri = historyUri(item.repoRoot, item.commit.hash, item.file.path);
+    const location = { repoRoot: item.repoRoot, commit: item.commit.hash };
+    const oldUri = vscode.Uri.parse(encodeHistoryUri({ ...location, side: 'old', path: item.file.oldPath ?? item.file.path }));
+    const newUri = vscode.Uri.parse(encodeHistoryUri({ ...location, side: 'new', path: item.file.path }));
     const title = `${item.file.path} (${item.commit.hash.slice(0, 7)})`;
     await vscode.commands.executeCommand('vscode.diff', oldUri, newUri, title, { preview: false });
+  }
+
+  // Commit content never changes, so it is read from Git once per commit, side, and path.
+  const commitContents = new Map<string, string>();
+  async function placeCommitThreads(root: string, records: ReviewDocument['threads']): Promise<Map<string, { uri: string; content: string }>> {
+    const placements = new Map<string, { uri: string; content: string }>();
+    for (const record of records) {
+      const commit = record.commit ?? '';
+      if (!record.path) {
+        placements.set(record.id, { uri: encodeHistoryUri({ repoRoot: root, commit, side: 'commit', path: '' }), content: '' });
+        continue;
+      }
+      const key = `${root}\0${commit}\0${record.side}\0${record.path}`;
+      let content = commitContents.get(key);
+      if (content === undefined) {
+        try {
+          const hash = record.side === 'new' ? commit : await getCommitParent(root, commit);
+          content = hash ? await getCommitContent(root, hash, record.path) : '';
+          commitContents.set(key, content);
+        } catch { content = ''; /* A commit that no longer exists leaves its thread unplaced. */ }
+      }
+      placements.set(record.id, { uri: encodeHistoryUri({ repoRoot: root, commit, side: record.side, path: record.path }), content });
+    }
+    return placements;
+  }
+
+  async function openCommitComments(item: HistoryCommitItem): Promise<void> {
+    const uri = vscode.Uri.parse(encodeHistoryUri({ repoRoot: item.repoRoot, commit: item.commit.hash, side: 'commit', path: '' }));
+    await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(uri), { preview: false });
+    updateEditorContext();
   }
 
   async function loadMoreHistory(item: HistoryLoadMoreItem): Promise<void> {
@@ -250,6 +281,11 @@ export function activate(context: vscode.ExtensionContext): void {
     const uri = native?.thread.uri ?? editor?.document.uri;
     const range = native?.thread.range ?? editor?.selection;
     if (!uri || !range) throw new Error('Open a review diff and select a line.');
+    const history = decodeHistoryUri(uri.toString());
+    if (history) {
+      await createCommitThread(history, range, native);
+      return;
+    }
     const location = decodeReviewUri(uri.toString());
     if (!location) throw new Error('Comments can be added from a diff in NITL.');
     const state = states.get(location.repoRoot);
@@ -264,6 +300,32 @@ export function activate(context: vscode.ExtensionContext): void {
     await mutate(location.repoRoot, document => {
       addThread(document, thread);
     });
+    if (native) native.thread.dispose();
+  }
+
+  async function createCommitThread(
+    location: HistoryLocation, range: vscode.Range, native?: vscode.CommentReply,
+  ): Promise<void> {
+    if (!states.has(location.repoRoot)) throw new Error('Open the commit from NITL Git Blame.');
+    const body = native?.text ?? await vscode.window.showInputBox({ title: 'Add Review Comment', prompt: 'Comment on this commit', ignoreFocusOut: true });
+    if (!body?.trim()) return;
+    const { startLine, endLine } = reviewLocation(range.start.line, range.start.character, range.end.line, range.end.character);
+    const request = { author: 'human' as const, body };
+    let thread;
+    if (location.side === 'commit') {
+      thread = await prepareCommitThread(location.repoRoot, location.commit, request);
+    } else {
+      try {
+        thread = await prepareCommitThread(location.repoRoot, location.commit, { ...request, path: location.path, side: location.side, startLine, endLine });
+      } catch (error) {
+        if (!(error instanceof UnchangedLinesError)) throw error;
+        // Unchanged lines take no line thread, so the comment goes on the commit body with a reference.
+        const lines = endLine === startLine ? `line ${startLine}` : `lines ${startLine}-${endLine}`;
+        thread = await prepareCommitThread(location.repoRoot, location.commit, { ...request, body: `\`${location.path}\` ${lines} (${location.side}):\n\n${body}` });
+        void vscode.window.showInformationMessage(`${location.path} ${lines} is unchanged in this commit, so NITL added the comment to the commit body.`);
+      }
+    }
+    await mutate(location.repoRoot, document => { addThread(document, thread); });
     if (native) native.thread.dispose();
   }
 
@@ -304,6 +366,7 @@ export function activate(context: vscode.ExtensionContext): void {
     command('agentReview.showBlame', showBlame),
     command('agentReview.openBlameLine', openBlameLine),
     command('agentReview.openHistoryFile', openHistoryFile),
+    command('agentReview.openCommitComments', openCommitComments),
     command('agentReview.loadMoreHistory', loadMoreHistory),
     command('agentReview.showStale', async (item: UnplacedThreadItem) => {
       const record = item.reviewThread;

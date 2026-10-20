@@ -50,6 +50,8 @@ function checkedPath(filePath: string): string {
   return filePath;
 }
 
+export const BINARY_PREVIEW = 'Binary file: preview unavailable.';
+
 export async function getRepositoryHistory(repoRoot: string, limit = 50): Promise<HistoryCommit[]> {
   if (!Number.isSafeInteger(limit) || limit < 0) throw new Error(`Invalid history limit: ${limit}`);
   if (limit === 0) return [];
@@ -191,13 +193,57 @@ export async function getCommitContent(repoRoot: string, hash: string, filePath:
   } catch {
     return '';
   }
-  const binaryMarker = 'Binary file: preview unavailable.';
-  if (size >= 32 * 1024 * 1024) return binaryMarker;
+  if (size >= 32 * 1024 * 1024) return BINARY_PREVIEW;
   const content = await gitBytes(repoRoot, ['show', `${hash}:${filePath}`]);
-  if (content.includes(0)) return binaryMarker;
+  if (content.includes(0)) return BINARY_PREVIEW;
   try {
     return new TextDecoder('utf-8', { fatal: true }).decode(content);
   } catch {
-    return binaryMarker;
+    return BINARY_PREVIEW;
   }
+}
+
+/** Full hash of a commit named by any revision, such as a short hash. */
+export async function resolveCommit(repoRoot: string, revision: string): Promise<string> {
+  if (!revision || revision.startsWith('-')) throw new Error(`Invalid commit: ${revision}`);
+  try {
+    return checkedHash((await git(repoRoot, ['rev-parse', '--verify', '--quiet', `${revision}^{commit}`])).trim());
+  } catch {
+    throw new Error(`Commit not found: ${revision}`);
+  }
+}
+
+/** Header, message, and file statistics shown as the commit body that commit comments attach to. */
+export async function getCommitSummary(repoRoot: string, hash: string): Promise<string> {
+  return git(repoRoot, ['show', '--stat', '--format=fuller', '--no-color', checkedHash(hash), '--']);
+}
+
+/**
+ * Inclusive one-based line ranges that a commit changed on one side of its file
+ * diff. The old side is the first parent, so a merge shows what it brought in.
+ */
+export async function getCommitChangedLines(
+  repoRoot: string, hash: string, filePath: string, side: 'old' | 'new',
+): Promise<Array<[number, number]>> {
+  const file = (await getCommitFiles(repoRoot, hash))
+    .find(candidate => (side === 'new' ? candidate.path : candidate.oldPath ?? candidate.path) === checkedPath(filePath));
+  if (!file || (side === 'old' && file.status === 'added') || (side === 'new' && file.status === 'deleted')) return [];
+  const parent = await getCommitParent(repoRoot, hash);
+  // Literal pathspecs keep a name such as `[id].ts` from matching `i.ts` as a glob.
+  const patch = await git(repoRoot, [
+    '--literal-pathspecs', 'diff-tree', '--root', '-r', '-p', '-U0', '--find-renames', '--no-commit-id', '--no-color', '--no-ext-diff',
+    ...(parent ? [parent] : []), hash, '--', ...(file.oldPath ? [file.oldPath] : []), file.path,
+  ]);
+  const ranges: Array<[number, number]> = [];
+  for (const match of patch.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)) {
+    const start = Number(side === 'old' ? match[1] : match[3]);
+    const count = Number((side === 'old' ? match[2] : match[4]) ?? 1);
+    if (count > 0) ranges.push([start, start + count - 1]);
+  }
+  return ranges;
+}
+
+/** Whether a line range lies inside one changed block, where line threads are allowed. */
+export function rangeIsChanged(ranges: Array<[number, number]>, startLine: number, endLine: number): boolean {
+  return ranges.some(([start, end]) => start <= startLine && endLine <= end);
 }

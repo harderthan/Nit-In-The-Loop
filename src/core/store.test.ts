@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
-import { addThread } from './review';
+import { addThread, type ReviewDocument } from './review';
 import { readReview, updateReview, writeReview } from './store';
 
 test('missing review file reads as an empty versioned document', async () => {
@@ -153,4 +153,19 @@ test('updateReview recovers a lock left by a crashed process', async () => {
     child.kill('SIGKILL');
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test('commit threads round trip and reject an invalid commit hash', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'review-store-'));
+  const file = path.join(directory, 'reviews.json');
+  try {
+    const review: ReviewDocument = { version: 1, threads: [] };
+    const commit = 'b'.repeat(40);
+    addThread(review, { path: '', side: 'new', startLine: 1, endLine: 1, baseCommit: commit, anchorText: '', commit, author: 'human', body: 'Body comment.' });
+    assert.throws(() => addThread(review, { path: '', side: 'new', startLine: 1, endLine: 1, baseCommit: '', anchorText: '', author: 'human', body: 'No path.' }), /path/);
+    await writeReview(file, review);
+    assert.deepEqual(await readReview(file), review);
+    await writeFile(file, JSON.stringify({ version: 1, threads: [{ ...review.threads[0], commit: 'HEAD' }] }));
+    await assert.rejects(readReview(file), /Invalid review file/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

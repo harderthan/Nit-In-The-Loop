@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
-import { getCommitContent, getCommitFiles, getCommitParent, getCurrentBranch, getRepositoryHistory } from './history';
+import { getCommitChangedLines, getCommitContent, getCommitFiles, getCommitParent, getCommitSummary, getCurrentBranch, getRepositoryHistory, rangeIsChanged, resolveCommit } from './history';
 
 const repositories: string[] = [];
 
@@ -222,4 +222,41 @@ test('rejects unsafe hashes and repository-escaping content paths', async () => 
   await assert.rejects(getCommitContent(root, 'a'.repeat(40), '../outside.txt'), /repository/i);
   await assert.rejects(getCommitContent(root, 'a'.repeat(40), '/tmp/outside.txt'), /repository/i);
   await assert.rejects(getCommitContent(root, 'a'.repeat(40), 'missing.txt'));
+});
+
+test('reports changed line ranges per side, including added, deleted, and renamed files', async () => {
+  const root = repository();
+  writeFileSync(path.join(root, 'kept.txt'), 'a\nb\nc\nd\n');
+  writeFileSync(path.join(root, 'gone.txt'), 'x\ny\n');
+  writeFileSync(path.join(root, 'old name.txt'), 'same\nsame\nsame\n');
+  const first = commit(root, 'Initial', 'Alice', '2020-01-02T03:04:05+0000');
+  assert.deepEqual(await getCommitChangedLines(root, first, 'kept.txt', 'new'), [[1, 4]]);
+  assert.deepEqual(await getCommitChangedLines(root, first, 'kept.txt', 'old'), []);
+
+  writeFileSync(path.join(root, 'kept.txt'), 'a\nB\nc\nd\ne\n');
+  git(root, 'rm', '-q', 'gone.txt');
+  git(root, 'mv', 'old name.txt', 'new name.txt');
+  writeFileSync(path.join(root, 'new name.txt'), 'same\nsame\nchanged\n');
+  const second = commit(root, 'Change', 'Bob', '2020-02-03T04:05:06+0000');
+  assert.deepEqual(await getCommitChangedLines(root, second, 'kept.txt', 'new'), [[2, 2], [5, 5]]);
+  assert.deepEqual(await getCommitChangedLines(root, second, 'kept.txt', 'old'), [[2, 2]]);
+  assert.deepEqual(await getCommitChangedLines(root, second, 'gone.txt', 'old'), [[1, 2]]);
+  assert.deepEqual(await getCommitChangedLines(root, second, 'gone.txt', 'new'), []);
+  assert.deepEqual(await getCommitChangedLines(root, second, 'new name.txt', 'new'), [[3, 3]]);
+  assert.deepEqual(await getCommitChangedLines(root, second, 'old name.txt', 'old'), [[3, 3]]);
+  assert.deepEqual(await getCommitChangedLines(root, second, 'missing.txt', 'new'), []);
+  writeFileSync(path.join(root, '[id].ts'), 'one\n');
+  writeFileSync(path.join(root, 'i.ts'), Array.from({ length: 9 }, (_, index) => `${index}`).join('\n') + '\n');
+  const third = commit(root, 'Glob names', 'Bob', '2020-03-03T04:05:06+0000');
+  writeFileSync(path.join(root, 'i.ts'), Array.from({ length: 9 }, (_, index) => index === 8 ? 'nine' : `${index}`).join('\n') + '\n');
+  writeFileSync(path.join(root, '[id].ts'), 'ONE\n');
+  const fourth = commit(root, 'Change both', 'Bob', '2020-04-03T04:05:06+0000');
+  assert.ok(third);
+  assert.deepEqual(await getCommitChangedLines(root, fourth, '[id].ts', 'new'), [[1, 1]]);
+  assert.equal(rangeIsChanged([[2, 4]], 2, 4), true);
+  assert.equal(rangeIsChanged([[2, 2], [4, 4]], 2, 4), false);
+
+  assert.equal(await resolveCommit(root, second.slice(0, 7)), second);
+  await assert.rejects(resolveCommit(root, '--all'), /Invalid commit/);
+  assert.match(await getCommitSummary(root, second), /Change[\s\S]*kept\.txt/);
 });

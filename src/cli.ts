@@ -3,7 +3,8 @@ import { addReply, addThread, setResolved, type Author, type ReviewThread } from
 import { discoverRepository, getChanges, getHeadContent, getStorePath, getWorkingContent } from './core/git';
 import { readReview, updateReview } from './core/store';
 import { reviewLines, threadIsStale } from './core/anchors';
-import { prepareThread } from './core/prepareThread';
+import { prepareCommitThread, prepareThread } from './core/prepareThread';
+import { resolveCommit } from './core/history';
 
 type Options = Record<string, string | boolean>;
 
@@ -43,6 +44,8 @@ function author(options: Options): Author {
 }
 
 function currentThread(repo: string, thread: ReviewThread): ReviewThread {
+  // Commit content never changes, so a commit comment keeps its anchor.
+  if (thread.commit) return thread;
   try {
     const content = thread.side === 'old' ? getHeadContent(repo, thread.path) : getWorkingContent(repo, thread.path);
     const lines = reviewLines(content);
@@ -72,7 +75,24 @@ export async function run(args: string[], cwd = process.cwd()): Promise<void> {
   const storePath = getStorePath(repo);
   if (command === 'threads') {
     const review = await readReview(storePath);
-    print(review.threads.filter(thread => options.all || !thread.resolved).map(thread => currentThread(repo, thread)));
+    const commit = typeof options.commit === 'string' ? await resolveCommit(repo, options.commit) : undefined;
+    print(review.threads
+      .filter(thread => (options.all || !thread.resolved) && (!commit || thread.commit === commit))
+      .map(thread => currentThread(repo, thread)));
+    return;
+  }
+  if (command === 'add' && typeof options.commit === 'string') {
+    // Without --file the comment goes on the commit body, like a pull request conversation comment.
+    const path = typeof options.file === 'string' ? options.file : undefined;
+    if (!path && (options.side || options.line || options['end-line'])) throw new Error('--side and --line need --file');
+    const startLine = path ? lineNumber(required(options, 'line'), 'start') : undefined;
+    const endLine = path && options['end-line'] ? lineNumber(required(options, 'end-line'), 'end') : startLine;
+    const side = path ? required(options, 'side') : undefined;
+    if (side !== undefined && side !== 'old' && side !== 'new') throw new Error('--side must be old or new');
+    const input = await prepareCommitThread(repo, options.commit, {
+      path, side, startLine, endLine, author: author(options), body: required(options, 'body'),
+    });
+    print(await updateReview(storePath, review => addThread(review, input)));
     return;
   }
   if (command === 'add') {

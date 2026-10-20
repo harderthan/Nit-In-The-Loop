@@ -18,6 +18,8 @@ export interface ReviewThread {
   endLine: number;
   baseCommit: string;
   anchorText: string;
+  /** Set for a comment on a commit. An empty path makes it a commit body comment. */
+  commit?: string;
   stale: boolean;
   resolved: boolean;
   comments: ReviewComment[];
@@ -37,6 +39,7 @@ export interface NewThread {
   endLine: number;
   baseCommit: string;
   anchorText: string;
+  commit?: string;
   author: Author;
   body: string;
 }
@@ -47,7 +50,7 @@ export interface NewReply {
 }
 
 export function addThread(review: ReviewDocument, input: NewThread): ReviewThread {
-  if (typeof input.path !== 'string' || input.path.length === 0) throw new Error('Thread path is required');
+  if (typeof input.path !== 'string' || (input.path.length === 0 && !input.commit)) throw new Error('Thread path is required');
   if (typeof input.baseCommit !== 'string') throw new Error('Invalid base commit');
   if (typeof input.anchorText !== 'string') throw new Error('Invalid anchor text');
   if (!Number.isSafeInteger(input.startLine) || !Number.isSafeInteger(input.endLine) || input.startLine < 1 || input.endLine < input.startLine) {
@@ -64,6 +67,7 @@ export function addThread(review: ReviewDocument, input: NewThread): ReviewThrea
     endLine: input.endLine,
     baseCommit: input.baseCommit,
     anchorText: input.anchorText,
+    ...(input.commit ? { commit: input.commit } : {}),
     stale: false,
     resolved: false,
     comments: [newComment(input)],

@@ -33,15 +33,21 @@ test('refreshing a replied thread keeps its expanded state', () => {
       baseCommit: 'abc', anchorText: 'example', stale: false, resolved: false,
       comments: [{ id: 'comment-1', author: 'agent', body: 'Review this', createdAt: '2026-01-01T00:00:00.000Z' }],
     };
-    view.render('/repo', [record], () => 'example');
+    view.render('/repo', [record], () => ({ uri: 'agent-review-new://review/src/example.ts?L3JlcG8', content: 'example' }));
     const rendered = createdThreads[0];
     assert.equal(rendered.collapsibleState, vscode.CommentThreadCollapsibleState.Collapsed);
 
     rendered.collapsibleState = vscode.CommentThreadCollapsibleState.Expanded;
     record.comments.push({ id: 'comment-2', author: 'human', body: 'Will fix', createdAt: '2026-01-01T00:01:00.000Z' });
-    view.render('/repo', [record], () => 'example');
+    view.render('/repo', [record], () => ({ uri: 'agent-review-new://review/src/example.ts?L3JlcG8', content: 'example' }));
     assert.equal(rendered.comments.length, 2);
     assert.equal(rendered.collapsibleState, vscode.CommentThreadCollapsibleState.Expanded);
+
+    const commit = 'c'.repeat(40);
+    const body: ReviewThread = { ...record, id: 'thread-2', path: '', commit, anchorText: '' };
+    view.render('/repo', [record, body], item => ({ uri: item.commit ? `agent-review-history://review/${item.id}` : 'agent-review-new://review/src/example.ts?L3JlcG8', content: item.commit ? '' : 'example' }));
+    const commitThread = createdThreads[1] as unknown as { range: { startLine: number; endLine: number }; label: string };
+    assert.deepEqual([commitThread.range.startLine, commitThread.range.endLine, commitThread.label], [0, 0, 'Commit ccccccc']);
     view.dispose();
   } finally {
     loader._load = originalLoad;

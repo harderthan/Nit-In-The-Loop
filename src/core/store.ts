@@ -131,7 +131,8 @@ function validateReview(value: unknown, filePath: string): asserts value is Revi
 function validThread(value: unknown): value is ReviewThread {
   if (!record(value)) return false;
   return typeof value.id === 'string' && value.id.length > 0
-    && typeof value.path === 'string' && value.path.length > 0
+    && typeof value.path === 'string' && (value.path.length > 0 || value.commit !== undefined)
+    && (value.commit === undefined || (typeof value.commit === 'string' && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(value.commit)))
     && (value.side === 'old' || value.side === 'new')
     && Number.isSafeInteger(value.startLine) && (value.startLine as number) > 0
     && Number.isSafeInteger(value.endLine) && (value.endLine as number) >= (value.startLine as number)

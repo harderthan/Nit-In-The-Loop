@@ -33,6 +33,7 @@ export class HistoryCommitItem extends vscode.TreeItem {
       : `${commit.author} · ${new Date(commit.date).toLocaleString()}`;
     this.tooltip = `${commit.subject}\n${commit.refs.join(' · ')}\n${commit.author} · ${commit.date}\n${commit.hash}`;
     this.iconPath = new vscode.ThemeIcon('git-commit', new vscode.ThemeColor(color));
+    this.contextValue = 'historyCommit';
   }
 }
 

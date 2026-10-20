@@ -36,3 +36,30 @@ export function decodeReviewUri(value: string): { side: ReviewSide; repoRoot: st
     return undefined;
   }
 }
+
+/** A side of a commit diff, or the commit body document that commit body comments attach to. */
+export interface HistoryLocation { repoRoot: string; commit: string; side: ReviewSide | 'commit'; path: string }
+
+export function encodeHistoryUri(location: HistoryLocation): string {
+  const url = new URL('agent-review-history://review/');
+  // The commit body has no file, so its path is only a readable tab title.
+  const path = location.side === 'commit' ? `${location.commit.slice(0, 7)}.commit` : location.path;
+  url.pathname = `/${path.split('/').map(encodeURIComponent).join('/')}`;
+  url.search = Buffer.from(JSON.stringify([location.repoRoot, location.commit, location.side]), 'utf8').toString('base64url');
+  return url.toString();
+}
+
+export function decodeHistoryUri(value: string): HistoryLocation | undefined {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'agent-review-history:' || !url.search) return undefined;
+    const [repoRoot, commit, side] = JSON.parse(Buffer.from(url.search.slice(1), 'base64url').toString('utf8')) as unknown[];
+    if (typeof repoRoot !== 'string' || !repoRoot || typeof commit !== 'string' || !/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(commit)
+      || (side !== 'old' && side !== 'new' && side !== 'commit')) return undefined;
+    const path = side === 'commit' ? '' : url.pathname.slice(1).split('/').map(decodeURIComponent).join('/');
+    if (side !== 'commit' && !path) return undefined;
+    return { repoRoot, commit, side, path };
+  } catch {
+    return undefined;
+  }
+}

@@ -138,3 +138,37 @@ test('add waits for a review file lock before writing', async () => {
     repo.cleanup();
   }
 });
+
+test('agent can comment on changed commit lines and on the commit body, and filter by commit', () => {
+  const repo = fixture();
+  try {
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: repo.root, encoding: 'utf8' }).trim();
+    git('commit', '-qam', 'answer');
+    const commit = git('rev-parse', 'HEAD');
+
+    const line = run(repo.root, 'add', '--commit', commit.slice(0, 7), '--file', 'hello.ts', '--side', 'old', '--line', '1', '--body', 'Why 41?');
+    assert.equal(line.status, 0, line.stderr);
+    assert.deepEqual({ ...JSON.parse(line.stdout), id: '', comments: [] }, {
+      id: '', path: 'hello.ts', side: 'old', startLine: 1, endLine: 1, baseCommit: commit,
+      anchorText: 'const answer = 41;', commit, stale: false, resolved: false, comments: [],
+    });
+
+    const body = run(repo.root, 'add', '--commit', commit, '--body', 'Looks good overall');
+    assert.equal(body.status, 0, body.stderr);
+    assert.equal(JSON.parse(body.stdout).path, '');
+
+    const unchanged = run(repo.root, 'add', '--commit', 'HEAD~1', '--file', 'hello.ts', '--side', 'old', '--line', '1', '--body', 'No');
+    assert.notEqual(unchanged.status, 0);
+    assert.match(unchanged.stderr, /not changed in commit/);
+    const lineWithoutFile = run(repo.root, 'add', '--commit', commit, '--line', '1', '--body', 'No');
+    assert.match(lineWithoutFile.stderr, /need --file/);
+
+    writeFileSync(join(repo.root, 'hello.ts'), 'const answer = 43;\n');
+    assert.equal(run(repo.root, 'add', '--file', 'hello.ts', '--side', 'new', '--line', '1', '--body', 'Working tree').status, 0);
+    assert.equal(JSON.parse(run(repo.root, 'threads').stdout).length, 3);
+    const forCommit = JSON.parse(run(repo.root, 'threads', '--commit', commit.slice(0, 7)).stdout);
+    assert.deepEqual(forCommit.map((thread: { path: string; stale: boolean }) => [thread.path, thread.stale]), [['hello.ts', false], ['', false]]);
+  } finally {
+    repo.cleanup();
+  }
+});
