@@ -40,6 +40,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const allThreads = new Map<string, ReviewDocument['threads']>();
   const runningThreads = comments.running;
   const runningSessions = new Set<string>();
+  const queueStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left);
+  queueStatus.command = 'agentReview.sendQueue';
+  context.subscriptions.push(queueStatus);
   let latestBlameRequest = 0;
   const provider = (side: 'old' | 'new'): vscode.TextDocumentContentProvider => ({
     onDidChange: virtualChanges.event,
@@ -148,6 +151,10 @@ export function activate(context: vscode.ExtensionContext): void {
     storeWatchers.retain([...states.values()].map(state => state.storePath));
     const repositories = [...states.values()];
     tree.setRepositories(repositories);
+    const queued = [...allThreads.values()].flat().filter(thread => !thread.resolved && thread.comments.some(comment => comment.queued)).length;
+    queueStatus.text = `$(send) NITL: Send ${queued} queued`;
+    queueStatus.tooltip = `Send ${queued} thread(s) with queued comments to the agent`;
+    if (queued) queueStatus.show(); else queueStatus.hide();
     const history = await loadHistory(repositories.map(repository => repository.root));
     blameTree.setHistory(history);
     blameView.description = history.length === 1 ? path.basename(history[0].root) : undefined;
@@ -492,6 +499,11 @@ export function activate(context: vscode.ExtensionContext): void {
     command('agentReview.reply', input => reply(input)),
     command('agentReview.queueReply', input => reply(input, true)),
     command('agentReview.sendQueue', sendQueue),
+    command('agentReview.sendThread', async (thread: vscode.CommentThread) => {
+      const target = comments.idForThread(thread);
+      if (!target) throw new Error('Select an existing review thread.');
+      await sendToAgent(target.repoRoot, [target.id]);
+    }),
     command('agentReview.resolve', thread => changeResolution(thread, true)),
     command('agentReview.reopen', thread => changeResolution(thread, false)),
     vscode.window.onDidChangeActiveTextEditor(updateEditorContext),

@@ -15,7 +15,7 @@ function asComment(comment: ReviewComment, stale: boolean, author: vscode.Commen
   return {
     body: comment.body,
     author,
-    label: stale ? 'Outdated line' : undefined,
+    label: [stale && 'Outdated line', comment.queued && 'Queued · not sent to the agent yet'].filter(Boolean).join(' · ') || undefined,
     timestamp: new Date(comment.createdAt),
     mode: vscode.CommentMode.Preview,
   };
@@ -109,7 +109,8 @@ export class ReviewComments implements vscode.Disposable {
       const status = this.running.has(key) ? ' · Agent answering…' : queued ? ` · ${queued} queued` : '';
       rendered.thread.label = (body ? `Commit ${record.commit?.slice(0, 7)}`
         : stale ? 'Outdated line · review anchor changed' : `Lines ${record.startLine}${record.endLine !== record.startLine ? `–${record.endLine}` : ''}`) + status;
-      rendered.thread.contextValue = record.resolved ? 'resolved' : 'open';
+      // `openQueued` shows the thread's send button. Menus match open threads with /^open/.
+      rendered.thread.contextValue = record.resolved ? 'resolved' : queued ? 'openQueued' : 'open';
       rendered.thread.state = record.resolved ? vscode.CommentThreadState.Resolved : vscode.CommentThreadState.Unresolved;
       rendered.thread.canReply = record.resolved ? false : this.authors.human;
     }

@@ -50,6 +50,13 @@ test('open threads start expanded, resolved ones collapse, and a refresh keeps t
     view.render('/repo', [record], () => ({ uri: 'agent-review-new://review/src/example.ts?L3JlcG8', content: 'example' }));
     assert.equal(rendered.collapsibleState, vscode.CommentThreadCollapsibleState.Expanded);
 
+    record.comments[1].queued = true;
+    view.render('/repo', [record], () => ({ uri: 'agent-review-new://review/src/example.ts?L3JlcG8', content: 'example' }));
+    const labels = (rendered.comments as { label?: string }[]).map(comment => comment.label);
+    assert.deepEqual(labels, [undefined, 'Queued · not sent to the agent yet']);
+    assert.equal((rendered as unknown as { contextValue: string }).contextValue, 'openQueued');
+    delete record.comments[1].queued;
+
     const commit = 'c'.repeat(40);
     const body: ReviewThread = { ...record, id: 'thread-2', path: '', commit, anchorText: '' };
     view.render('/repo', [record, body], item => ({ uri: item.commit ? `agent-review-history://review/${item.id}` : 'agent-review-new://review/src/example.ts?L3JlcG8', content: item.commit ? '' : 'example' }));

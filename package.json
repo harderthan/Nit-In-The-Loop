@@ -2,7 +2,7 @@
   "name": "nitl",
   "displayName": "NITL",
   "description": "Local line-by-line review threads for Git changes and coding agents",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publisher": "NickyKim",
   "license": "Apache-2.0",
   "engines": {
@@ -119,6 +119,11 @@
         "command": "agentReview.sendQueue",
         "title": "Send Queued Comments to Agent",
         "icon": "$(send)"
+      },
+      {
+        "command": "agentReview.sendThread",
+        "title": "Send Queued Comments to Agent",
+        "icon": "$(send)"
       }
     ],
     "menus": {
@@ -186,19 +191,24 @@
         },
         {
           "command": "agentReview.reply",
-          "when": "commentController == agent-review && !commentThreadIsEmpty && commentThread == open",
+          "when": "commentController == agent-review && !commentThreadIsEmpty && commentThread =~ /^open/",
           "group": "inline"
         },
         {
           "command": "agentReview.queueReply",
-          "when": "commentController == agent-review && !commentThreadIsEmpty && commentThread == open",
+          "when": "commentController == agent-review && !commentThreadIsEmpty && commentThread =~ /^open/",
           "group": "inline"
         }
       ],
       "comments/commentThread/title": [
         {
+          "command": "agentReview.sendThread",
+          "when": "commentController == agent-review && commentThread == openQueued",
+          "group": "inline"
+        },
+        {
           "command": "agentReview.resolve",
-          "when": "commentController == agent-review && commentThread == open",
+          "when": "commentController == agent-review && commentThread =~ /^open/",
           "group": "inline"
         },
         {
@@ -242,6 +252,10 @@
         },
         {
           "command": "agentReview.showStale",
+          "when": "false"
+        },
+        {
+          "command": "agentReview.sendThread",
           "when": "false"
         }
       ]
