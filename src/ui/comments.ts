@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import type { ReviewComment, ReviewThread } from '../core/review';
-import { threadIsStale } from '../core/anchors';
+import { rangeIsStale } from '../core/anchors';
 import { decodeHistoryUri, decodeReviewUri, lineRange, reviewLines, type HistoryLocation } from './anchors';
 import { authorPresentation } from './author';
 
@@ -16,7 +16,7 @@ function asComment(comment: ReviewComment, stale: boolean, author: vscode.Commen
     body: comment.body,
     author,
     label: [stale && 'Outdated line', comment.queued && 'Queued · not sent to the agent yet'].filter(Boolean).join(' · ') || undefined,
-    timestamp: new Date(comment.createdAt),
+    timestamp: new Date(comment.at),
     mode: vscode.CommentMode.Preview,
   };
 }
@@ -76,8 +76,10 @@ export class ReviewComments implements vscode.Disposable {
       const placement = place(record);
       const uri = vscode.Uri.parse(placement.uri);
       const lines = reviewLines(placement.content);
-      const body = !!record.commit && !record.path;
-      const bounds = body ? { start: 0, end: 0 } : lineRange(record.startLine, record.endLine);
+      const { file } = record.location;
+      const body = !file;
+      const resolved = record.status === 'resolved';
+      const bounds = file ? lineRange(...file.lines) : { start: 0, end: 0 };
       const anchored = body || (bounds.start < lines.length && bounds.end < lines.length);
       // Out-of-range anchors are exposed by the review tree, never moved to another line.
       if (!anchored) {
@@ -87,32 +89,33 @@ export class ReviewComments implements vscode.Disposable {
         continue;
       }
       const range = new vscode.Range(bounds.start, 0, bounds.end, body ? 0 : lines[bounds.end]?.length ?? 0);
-      const stale = !body && threadIsStale(record, lines);
+      const stale = !!file && rangeIsStale(file, lines);
       const comments = record.comments.map(comment => asComment(comment, stale, this.authors[comment.author]));
       let rendered = this.threads.get(key);
       if (!rendered || rendered.thread.uri.toString() !== uri.toString()) {
         rendered?.thread.dispose();
         const thread = this.controller.createCommentThread(uri, range, comments);
-        rendered = { id: record.id, repoRoot, thread, resolved: !record.resolved };
+        rendered = { id: record.id, repoRoot, thread, resolved: !resolved };
         this.threads.set(key, rendered);
       } else {
         rendered.thread.range = range;
         rendered.thread.comments = comments;
       }
       // Open threads start expanded and resolved ones collapsed. Otherwise the user's choice is kept.
-      if (rendered.resolved !== record.resolved) {
-        rendered.thread.collapsibleState = record.resolved
+      if (rendered.resolved !== resolved) {
+        rendered.thread.collapsibleState = resolved
           ? vscode.CommentThreadCollapsibleState.Collapsed : vscode.CommentThreadCollapsibleState.Expanded;
-        rendered.resolved = record.resolved;
+        rendered.resolved = resolved;
       }
       const queued = record.comments.filter(comment => comment.queued).length;
       const status = this.running.has(key) ? ' · Agent answering…' : queued ? ` · ${queued} queued` : '';
-      rendered.thread.label = (body ? `Commit ${record.commit?.slice(0, 7)}`
-        : stale ? 'Outdated line · review anchor changed' : `Lines ${record.startLine}${record.endLine !== record.startLine ? `–${record.endLine}` : ''}`) + status;
+      const [start, end] = file?.lines ?? [0, 0];
+      rendered.thread.label = (!file ? `Commit ${record.location.sha.slice(0, 7)}`
+        : stale ? 'Outdated line · review anchor changed' : `Lines ${start}${end !== start ? `–${end}` : ''}`) + status;
       // `openQueued` shows the thread's send button. Menus match open threads with /^open/.
-      rendered.thread.contextValue = record.resolved ? 'resolved' : queued ? 'openQueued' : 'open';
-      rendered.thread.state = record.resolved ? vscode.CommentThreadState.Resolved : vscode.CommentThreadState.Unresolved;
-      rendered.thread.canReply = record.resolved ? false : this.authors.human;
+      rendered.thread.contextValue = resolved ? 'resolved' : queued ? 'openQueued' : 'open';
+      rendered.thread.state = resolved ? vscode.CommentThreadState.Resolved : vscode.CommentThreadState.Unresolved;
+      rendered.thread.canReply = resolved ? false : this.authors.human;
     }
   }
 

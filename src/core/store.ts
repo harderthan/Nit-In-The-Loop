@@ -8,7 +8,7 @@ export async function readReview(filePath: string): Promise<ReviewDocument> {
   try {
     contents = await readFile(filePath, 'utf8');
   } catch (error) {
-    if (isMissing(error)) return { version: 1, threads: [] };
+    if (isMissing(error)) return { version: 2, threads: [] };
     throw error;
   }
 
@@ -18,6 +18,7 @@ export async function readReview(filePath: string): Promise<ReviewDocument> {
   } catch (error) {
     throw new Error(`Cannot parse review file ${filePath}: ${message(error)}`);
   }
+  if (record(parsed) && parsed.version === 1) parsed = upgradeV1(parsed, filePath);
   validateReview(parsed, filePath);
   return parsed;
 }
@@ -124,33 +125,108 @@ function isProcessAlive(pid: number): boolean {
 
 function validateReview(value: unknown, filePath: string): asserts value is ReviewDocument {
   if (!record(value)) throw invalid(filePath);
-  if (value.version !== 1) throw new Error(`Unsupported review file version in ${filePath}: ${String(value.version)}`);
-  if (!Array.isArray(value.threads) || !value.threads.every(validThread)) throw invalid(filePath);
+  if (value.version !== 2) throw new Error(`Unsupported review file version in ${filePath}: ${String(value.version)}`);
+  if (!keys(value, ['version', 'threads']) || !Array.isArray(value.threads) || !value.threads.every(validThread)) throw invalid(filePath);
 }
 
+// These checks mirror schema/review.schema.json. A test holds the two in agreement.
+const HASH = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+
 function validThread(value: unknown): value is ReviewThread {
+  return record(value) && keys(value, ['id', 'status', 'location', 'agent', 'comments'])
+    && typeof value.id === 'string' && value.id.length > 0
+    && (value.status === 'open' || value.status === 'resolved')
+    && validLocation(value.location)
+    && (value.agent === undefined || (record(value.agent) && keys(value.agent, ['session'])
+      && typeof value.agent.session === 'string' && value.agent.session.length > 0))
+    && Array.isArray(value.comments) && value.comments.length > 0 && value.comments.every(validComment);
+}
+
+function validLocation(value: unknown): boolean {
+  if (!record(value) || !keys(value, ['on', 'sha', 'file']) || typeof value.sha !== 'string') return false;
+  if (value.on === 'worktree') return (value.sha === '' || HASH.test(value.sha)) && validFile(value.file);
+  return value.on === 'commit' && HASH.test(value.sha) && (value.file === undefined || validFile(value.file));
+}
+
+function validFile(value: unknown): boolean {
+  if (!record(value) || !keys(value, ['path', 'side', 'lines', 'text'])) return false;
+  const lines = value.lines;
+  return typeof value.path === 'string' && value.path.length > 0
+    && (value.side === 'old' || value.side === 'new')
+    && Array.isArray(lines) && lines.length === 2 && lines.every(line => Number.isSafeInteger(line) && line > 0) && lines[1] >= lines[0]
+    && typeof value.text === 'string';
+}
+
+function validComment(value: unknown): value is ReviewComment {
+  return record(value) && keys(value, ['id', 'author', 'body', 'at', 'queued'])
+    && typeof value.id === 'string' && value.id.length > 0
+    && (value.author === 'human' || value.author === 'agent')
+    && typeof value.body === 'string' && value.body.trim().length > 0
+    && typeof value.at === 'string' && isDateTime(value.at)
+    && (value.queued === undefined || typeof value.queued === 'boolean');
+}
+
+// RFC 3339 date-time, as the schema's `format: date-time` requires. Date.parse alone accepts
+// a bare date and rolls February 30 over to March.
+const DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})[T ]([01]\d|2[0-3]):[0-5]\d:[0-5]\d(\.\d+)?(Z|[+-]([01]\d|2[0-3]):?[0-5]\d)$/i;
+
+function isDateTime(value: string): boolean {
+  const match = DATE_TIME.exec(value);
+  if (!match) return false;
+  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
+  return month >= 1 && month <= 12 && day >= 1 && day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function keys(value: Record<string, unknown>, allowed: string[]): boolean {
+  return Object.keys(value).every(key => allowed.includes(key));
+}
+
+/** Version 1 kept every thread field flat. Reading upgrades it, and the next write saves version 2. */
+function upgradeV1(value: unknown, filePath: string): ReviewDocument {
+  if (!record(value) || !Array.isArray(value.threads) || !value.threads.every(validV1Thread)) throw invalid(filePath);
+  return {
+    version: 2,
+    threads: value.threads.map(thread => {
+      const file = thread.path
+        ? { path: thread.path, side: thread.side, lines: [thread.startLine, thread.endLine] as [number, number], text: thread.anchorText }
+        : undefined;
+      return {
+        id: thread.id,
+        status: thread.resolved ? 'resolved' : 'open',
+        location: thread.commit ? { on: 'commit', sha: thread.commit, ...(file ? { file } : {}) }
+          : { on: 'worktree', sha: thread.baseCommit, file: file! },
+        ...(thread.agentSession ? { agent: { session: thread.agentSession } } : {}),
+        comments: thread.comments.map(comment => ({
+          id: comment.id, author: comment.author, body: comment.body, at: comment.createdAt,
+          ...(comment.queued ? { queued: true } : {}),
+        })),
+      };
+    }),
+  };
+}
+
+interface V1Thread {
+  id: string; path: string; side: 'old' | 'new'; startLine: number; endLine: number; baseCommit: string;
+  anchorText: string; commit?: string; agentSession?: string; resolved: boolean;
+  comments: Array<{ id: string; author: 'human' | 'agent'; body: string; createdAt: string; queued?: boolean }>;
+}
+
+function validV1Thread(value: unknown): value is V1Thread {
   if (!record(value)) return false;
   return typeof value.id === 'string' && value.id.length > 0
     && typeof value.path === 'string' && (value.path.length > 0 || value.commit !== undefined)
-    && (value.commit === undefined || (typeof value.commit === 'string' && /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/.test(value.commit)))
+    && (value.commit === undefined || (typeof value.commit === 'string' && HASH.test(value.commit)))
     && (value.side === 'old' || value.side === 'new')
     && Number.isSafeInteger(value.startLine) && (value.startLine as number) > 0
     && Number.isSafeInteger(value.endLine) && (value.endLine as number) >= (value.startLine as number)
     && typeof value.baseCommit === 'string'
     && typeof value.anchorText === 'string'
-    && (value.agentSession === undefined || (typeof value.agentSession === 'string' && value.agentSession.length > 0))
-    && typeof value.stale === 'boolean'
+    && (value.agentSession === undefined || typeof value.agentSession === 'string')
     && typeof value.resolved === 'boolean'
-    && Array.isArray(value.comments) && value.comments.length > 0 && value.comments.every(validComment);
-}
-
-function validComment(value: unknown): value is ReviewComment {
-  if (!record(value)) return false;
-  return typeof value.id === 'string' && value.id.length > 0
-    && (value.author === 'human' || value.author === 'agent')
-    && typeof value.body === 'string' && value.body.trim().length > 0
-    && typeof value.createdAt === 'string' && !Number.isNaN(Date.parse(value.createdAt))
-    && (value.queued === undefined || typeof value.queued === 'boolean');
+    && Array.isArray(value.comments) && value.comments.length > 0 && value.comments.every(comment => record(comment)
+      && typeof comment.id === 'string' && (comment.author === 'human' || comment.author === 'agent')
+      && typeof comment.body === 'string' && typeof comment.createdAt === 'string'
+      && (comment.queued === undefined || typeof comment.queued === 'boolean'));
 }
 
 function record(value: unknown): value is Record<string, unknown> {

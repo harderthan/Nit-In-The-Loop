@@ -2,7 +2,7 @@
 import { addReply, addThread, setResolved, type Author, type ReviewThread } from './core/review';
 import { discoverRepository, getChanges, getHeadContent, getStorePath, getWorkingContent } from './core/git';
 import { readReview, updateReview } from './core/store';
-import { reviewLines, threadIsStale } from './core/anchors';
+import { rangeIsStale, reviewLines } from './core/anchors';
 import { prepareCommitThread, prepareThread } from './core/prepareThread';
 import { resolveCommit } from './core/history';
 
@@ -43,14 +43,15 @@ function author(options: Options): Author {
   return value;
 }
 
-function currentThread(repo: string, thread: ReviewThread): ReviewThread {
+/** A thread as printed: `stale` is computed now, since the file may have changed since the comment. */
+function currentThread(repo: string, thread: ReviewThread): ReviewThread & { stale: boolean } {
+  const { location } = thread;
   // Commit content never changes, so a commit comment keeps its anchor.
-  if (thread.commit) return thread;
+  if (location.on === 'commit') return { ...thread, stale: false };
   try {
-    const content = thread.side === 'old' ? getHeadContent(repo, thread.path) : getWorkingContent(repo, thread.path);
-    const lines = reviewLines(content);
-    const stale = threadIsStale(thread, lines);
-    return { ...thread, stale };
+    const { path, side } = location.file;
+    const content = side === 'old' ? getHeadContent(repo, path) : getWorkingContent(repo, path);
+    return { ...thread, stale: rangeIsStale(location.file, reviewLines(content)) };
   } catch {
     return { ...thread, stale: true };
   }
@@ -77,7 +78,7 @@ export async function run(args: string[], cwd = process.cwd()): Promise<void> {
     const review = await readReview(storePath);
     const commit = typeof options.commit === 'string' ? await resolveCommit(repo, options.commit) : undefined;
     print(review.threads
-      .filter(thread => (options.all || !thread.resolved) && (!commit || thread.commit === commit))
+      .filter(thread => (options.all || thread.status === 'open') && (!commit || (thread.location.on === 'commit' && thread.location.sha === commit)))
       .map(thread => currentThread(repo, thread)));
     return;
   }

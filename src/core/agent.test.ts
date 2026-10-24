@@ -20,18 +20,19 @@ test('claude sessions start with a fixed id and resume it later, other agents ru
 });
 
 const thread = (id: string, extra: Partial<ReviewThread> = {}): ReviewThread => ({
-  id, path: 'src/a.ts', side: 'new', startLine: 3, endLine: 4, baseCommit: '', anchorText: 'const a = 1;', stale: false, resolved: false,
+  id, status: 'open',
+  location: { on: 'worktree', sha: '', file: { path: 'src/a.ts', side: 'new', lines: [3, 4], text: 'const a = 1;' } },
   comments: [
-    { id: `${id}-1`, author: 'human', body: 'Rename this.', createdAt: '2026-01-01T00:00:00.000Z' },
-    { id: `${id}-2`, author: 'agent', body: 'Done.', createdAt: '2026-01-01T00:01:00.000Z' },
-    { id: `${id}-3`, author: 'human', body: 'Also add a test.', createdAt: '2026-01-01T00:02:00.000Z', queued: true },
+    { id: `${id}-1`, author: 'human', body: 'Rename this.', at: '2026-01-01T00:00:00.000Z' },
+    { id: `${id}-2`, author: 'agent', body: 'Done.', at: '2026-01-01T00:01:00.000Z' },
+    { id: `${id}-3`, author: 'human', body: 'Also add a test.', at: '2026-01-01T00:02:00.000Z', queued: true },
   ],
   ...extra,
 });
 
 test('the prompt carries each thread location, code, conversation, and marker', () => {
   const commit = 'd'.repeat(40);
-  const prompt = buildAgentPrompt('/repo', [thread('t1'), thread('t2', { path: '', commit, anchorText: '' })]);
+  const prompt = buildAgentPrompt('/repo', [thread('t1'), thread('t2', { location: { on: 'commit', sha: commit } })]);
   assert.match(prompt, /<<<NITL thread=t1>>>\nLocation: src\/a\.ts, new side, lines 3-4, in the working tree changes against HEAD\nCode:\n```\nconst a = 1;\n```/);
   assert.match(prompt, /\[human, new\]\nAlso add a test\./);
   assert.match(prompt, /<<<NITL thread=t2>>>\nLocation: the body of commit ddddddd/);

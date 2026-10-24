@@ -112,25 +112,27 @@ export function activate(context: vscode.ExtensionContext): void {
       headFingerprints.set(root, `${getHeadSha(root)}\0${await getCurrentBranch(root)}`);
       const document = await readReview(storePath);
       allThreads.set(root, document.threads);
-      const working = document.threads.filter(record => !record.commit);
-      const commitPlacements = await placeCommitThreads(root, document.threads.filter(record => record.commit));
+      const working = document.threads.filter(record => record.location.on === 'worktree');
+      const commitPlacements = await placeCommitThreads(root, document.threads.filter(record => record.location.on === 'commit'));
       const files: ReviewFile[] = [...changedFiles];
       states.set(root, { root, files, changedFiles, threads: working, storePath });
       storeWatchers.ensure(storePath);
       for (const record of working) {
         // Persisted comments remain visible after the file leaves the changed-file list.
-        if (!files.some(file => file.path === record.path)) files.push({ path: record.path, status: 'threadOnly' });
+        const path = record.location.file?.path;
+        if (path && !files.some(file => file.path === path)) files.push({ path, status: 'threadOnly' });
       }
       const contentCache = new Map<string, string>();
       comments.render(root, document.threads, record => {
         const placed = commitPlacements.get(record.id);
-        if (placed) return placed;
-        const uri = encodeReviewUri(record.side, root, record.path);
-        const key = `${record.side}\0${record.path}`;
+        const file = record.location.file;
+        if (placed || !file) return placed ?? { uri: '', content: '' };
+        const uri = encodeReviewUri(file.side, root, file.path);
+        const key = `${file.side}\0${file.path}`;
         const cached = contentCache.get(key);
         if (cached !== undefined) return { uri, content: cached };
         let content: string;
-        try { content = record.side === 'old' ? getHeadContent(root, record.path) : getWorkingContent(root, record.path); }
+        try { content = file.side === 'old' ? getHeadContent(root, file.path) : getWorkingContent(root, file.path); }
         catch { content = ''; }
         contentCache.set(key, content);
         return { uri, content };
@@ -151,7 +153,7 @@ export function activate(context: vscode.ExtensionContext): void {
     storeWatchers.retain([...states.values()].map(state => state.storePath));
     const repositories = [...states.values()];
     tree.setRepositories(repositories);
-    const queued = [...allThreads.values()].flat().filter(thread => !thread.resolved && thread.comments.some(comment => comment.queued)).length;
+    const queued = [...allThreads.values()].flat().filter(thread => thread.status === 'open' && thread.comments.some(comment => comment.queued)).length;
     queueStatus.text = `$(send) NITL: Send ${queued} queued`;
     queueStatus.tooltip = `Send ${queued} thread(s) with queued comments to the agent`;
     if (queued) queueStatus.show(); else queueStatus.hide();
@@ -264,21 +266,21 @@ export function activate(context: vscode.ExtensionContext): void {
   async function placeCommitThreads(root: string, records: ReviewDocument['threads']): Promise<Map<string, { uri: string; content: string }>> {
     const placements = new Map<string, { uri: string; content: string }>();
     for (const record of records) {
-      const commit = record.commit ?? '';
-      if (!record.path) {
+      const { sha: commit, file } = record.location;
+      if (!file) {
         placements.set(record.id, { uri: encodeHistoryUri({ repoRoot: root, commit, side: 'commit', path: '' }), content: '' });
         continue;
       }
-      const key = `${root}\0${commit}\0${record.side}\0${record.path}`;
+      const key = `${root}\0${commit}\0${file.side}\0${file.path}`;
       let content = commitContents.get(key);
       if (content === undefined) {
         try {
-          const hash = record.side === 'new' ? commit : await getCommitParent(root, commit);
-          content = hash ? await getCommitContent(root, hash, record.path) : '';
+          const hash = file.side === 'new' ? commit : await getCommitParent(root, commit);
+          content = hash ? await getCommitContent(root, hash, file.path) : '';
           commitContents.set(key, content);
         } catch { content = ''; /* A commit that no longer exists leaves its thread unplaced. */ }
       }
-      placements.set(record.id, { uri: encodeHistoryUri({ repoRoot: root, commit, side: record.side, path: record.path }), content });
+      placements.set(record.id, { uri: encodeHistoryUri({ repoRoot: root, commit, side: file.side, path: file.path }), content });
     }
     return placements;
   }
@@ -373,7 +375,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (states.size === 0) await refresh();
     const batches = [...states.values()].map(state => ({
       root: state.root,
-      ids: allThreads.get(state.root)?.filter(thread => !thread.resolved && thread.comments.some(comment => comment.queued)).map(thread => thread.id) ?? [],
+      ids: allThreads.get(state.root)?.filter(thread => thread.status === 'open' && thread.comments.some(comment => comment.queued)).map(thread => thread.id) ?? [],
     })).filter(batch => batch.ids.length);
     if (batches.length === 0) {
       await vscode.window.showInformationMessage('No queued comments to send.');
@@ -409,11 +411,11 @@ export function activate(context: vscode.ExtensionContext): void {
     try {
       const document = await readReview(states.get(root)?.storePath ?? getStorePath(root));
       const threads = claimed.map(id => document.threads.find(thread => thread.id === id))
-        .filter((thread): thread is ReviewDocument['threads'][number] => !!thread && !thread.resolved);
+        .filter((thread): thread is ReviewDocument['threads'][number] => thread?.status === 'open');
       if (threads.length === 0) return;
       const answered = new Set(threads.flatMap(thread => thread.comments.map(comment => comment.id)));
-      const sessions = new Set(threads.map(thread => thread.agentSession));
-      const shared = sessions.size === 1 ? threads[0].agentSession : undefined;
+      const sessions = new Set(threads.map(thread => thread.agent?.session));
+      const shared = sessions.size === 1 ? threads[0].agent?.session : undefined;
       // Two runs must not resume one session at once, so a busy session gives way to a new one.
       const previous = shared && !runningSessions.has(shared) ? shared : undefined;
       await refresh();
@@ -499,7 +501,7 @@ export function activate(context: vscode.ExtensionContext): void {
     command('agentReview.showStale', async (item: UnplacedThreadItem) => {
       const record = item.reviewThread;
       const detail = record.comments.map(comment => `${comment.author}: ${comment.body}`).join('\n\n');
-      await vscode.window.showInformationMessage(`Outdated thread at ${record.path}:${record.startLine} (${record.side}). ${detail}`);
+      await vscode.window.showInformationMessage(`Outdated thread at ${record.location.file?.path}:${record.location.file?.lines[0]} (${record.location.file?.side}). ${detail}`);
     }),
     command('agentReview.refresh', refresh),
     command('agentReview.copyCliCommand', copyCliCommand),

@@ -35,9 +35,10 @@ class RepositoryItem extends vscode.TreeItem {
 
 export class UnplacedThreadItem extends vscode.TreeItem {
   constructor(readonly repoRoot: string, readonly reviewThread: ReviewThread) {
-    super(`Outdated · ${reviewThread.side === 'old' ? 'HEAD' : 'Working'} line ${reviewThread.startLine}`, vscode.TreeItemCollapsibleState.None);
+    const file = reviewThread.location.file;
+    super(`Outdated · ${file?.side === 'old' ? 'HEAD' : 'Working'} line ${file?.lines[0]}`, vscode.TreeItemCollapsibleState.None);
     this.description = reviewThread.comments[0]?.body.replace(/\s+/g, ' ').slice(0, 70);
-    this.tooltip = `Original line ${reviewThread.startLine} is outside the current document.\n${reviewThread.comments.map(comment => `${comment.author}: ${comment.body}`).join('\n')}`;
+    this.tooltip = `Original line ${file?.lines[0]} is outside the current document.\n${reviewThread.comments.map(comment => `${comment.author}: ${comment.body}`).join('\n')}`;
     this.iconPath = new vscode.ThemeIcon('warning');
     this.command = { command: 'agentReview.showStale', title: 'View Outdated Thread', arguments: [this] };
   }
@@ -69,10 +70,10 @@ export class ReviewTreeProvider implements vscode.TreeDataProvider<Item> {
 
   private filesFor(repo: ReviewRepository): ChangeItem[] {
     return repo.files.map(file => {
-      const threads = repo.threads.filter(thread => thread.path === file.path);
+      const threads = repo.threads.filter(thread => thread.location.file?.path === file.path);
       return new ChangeItem(repo.root, file,
-        threads.filter(thread => !thread.resolved).length,
-        threads.filter(thread => thread.resolved).length,
+        threads.filter(thread => thread.status === 'open').length,
+        threads.filter(thread => thread.status === 'resolved').length,
         threads.filter(thread => repo.unplacedIds?.has(thread.id)));
     });
   }

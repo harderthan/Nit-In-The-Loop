@@ -27,16 +27,18 @@ export const THREAD_MARKER = /^<<<NITL thread=([^>\s]+)>>>[ \t]*$/gm;
 
 export function buildAgentPrompt(repoRoot: string, threads: ReviewThread[]): string {
   const sections = threads.map(thread => {
-    const short = thread.commit?.slice(0, 7);
-    const lines = thread.startLine === thread.endLine ? `line ${thread.startLine}` : `lines ${thread.startLine}-${thread.endLine}`;
-    const location = thread.commit && !thread.path ? `the body of commit ${short} (a comment on the whole commit)`
-      : `${thread.path}, ${thread.side === 'old' ? 'old' : 'new'} side, ${lines}, in ${thread.commit ? `commit ${short}` : 'the working tree changes against HEAD'}`;
+    const { location } = thread;
+    const file = location.file;
+    const lines = file && (file.lines[0] === file.lines[1] ? `line ${file.lines[0]}` : `lines ${file.lines[0]}-${file.lines[1]}`);
+    const short = location.sha.slice(0, 7);
+    const where = location.on === 'commit' ? `commit ${short}` : 'the working tree changes against HEAD';
+    const description = file ? `${file.path}, ${file.side} side, ${lines}, in ${where}` : `the body of commit ${short} (a comment on the whole commit)`;
     const conversation = thread.comments.map(comment =>
       `[${comment.author}${comment.queued ? ', new' : ''}]\n${comment.body}`).join('\n\n');
     return [
       `<<<NITL thread=${thread.id}>>>`,
-      `Location: ${location}`,
-      ...(thread.anchorText ? ['Code:', '```', thread.anchorText, '```'] : []),
+      `Location: ${description}`,
+      ...(file?.text ? ['Code:', '```', file.text, '```'] : []),
       'Conversation:',
       conversation,
     ].join('\n');

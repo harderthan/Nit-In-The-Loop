@@ -29,24 +29,24 @@ test('open threads start expanded, resolved ones collapse, and a refresh keeps t
     const { ReviewComments } = require('./comments') as typeof import('./comments');
     const view = new ReviewComments(URI.file('/extension'), () => true);
     const record: ReviewThread = {
-      id: 'thread-1', path: 'src/example.ts', side: 'new', startLine: 1, endLine: 1,
-      baseCommit: 'abc', anchorText: 'example', stale: false, resolved: false,
-      comments: [{ id: 'comment-1', author: 'agent', body: 'Review this', createdAt: '2026-01-01T00:00:00.000Z' }],
+      id: 'thread-1', status: 'open',
+      location: { on: 'worktree', sha: '', file: { path: 'src/example.ts', side: 'new', lines: [1, 1], text: 'example' } },
+      comments: [{ id: 'comment-1', author: 'agent', body: 'Review this', at: '2026-01-01T00:00:00.000Z' }],
     };
     view.render('/repo', [record], () => ({ uri: 'agent-review-new://review/src/example.ts?L3JlcG8', content: 'example' }));
     const rendered = createdThreads[0];
     assert.equal(rendered.collapsibleState, vscode.CommentThreadCollapsibleState.Expanded);
 
     rendered.collapsibleState = vscode.CommentThreadCollapsibleState.Collapsed;
-    record.comments.push({ id: 'comment-2', author: 'human', body: 'Will fix', createdAt: '2026-01-01T00:01:00.000Z' });
+    record.comments.push({ id: 'comment-2', author: 'human', body: 'Will fix', at: '2026-01-01T00:01:00.000Z' });
     view.render('/repo', [record], () => ({ uri: 'agent-review-new://review/src/example.ts?L3JlcG8', content: 'example' }));
     assert.equal(rendered.comments.length, 2);
     assert.equal(rendered.collapsibleState, vscode.CommentThreadCollapsibleState.Collapsed);
 
-    record.resolved = true;
+    record.status = 'resolved';
     view.render('/repo', [record], () => ({ uri: 'agent-review-new://review/src/example.ts?L3JlcG8', content: 'example' }));
     assert.equal(rendered.collapsibleState, vscode.CommentThreadCollapsibleState.Collapsed);
-    record.resolved = false;
+    record.status = 'open';
     view.render('/repo', [record], () => ({ uri: 'agent-review-new://review/src/example.ts?L3JlcG8', content: 'example' }));
     assert.equal(rendered.collapsibleState, vscode.CommentThreadCollapsibleState.Expanded);
 
@@ -58,8 +58,10 @@ test('open threads start expanded, resolved ones collapse, and a refresh keeps t
     delete record.comments[1].queued;
 
     const commit = 'c'.repeat(40);
-    const body: ReviewThread = { ...record, id: 'thread-2', path: '', commit, anchorText: '' };
-    view.render('/repo', [record, body], item => ({ uri: item.commit ? `agent-review-history://review/${item.id}` : 'agent-review-new://review/src/example.ts?L3JlcG8', content: item.commit ? '' : 'example' }));
+    const body: ReviewThread = { ...record, id: 'thread-2', location: { on: 'commit', sha: commit } };
+    view.render('/repo', [record, body], item => item.location.on === 'commit'
+      ? { uri: `agent-review-history://review/${item.id}`, content: '' }
+      : { uri: 'agent-review-new://review/src/example.ts?L3JlcG8', content: 'example' });
     const commitThread = createdThreads[1] as unknown as { range: { startLine: number; endLine: number }; label: string };
     assert.deepEqual([commitThread.range.startLine, commitThread.range.endLine, commitThread.label], [0, 0, 'Commit ccccccc']);
     view.dispose();

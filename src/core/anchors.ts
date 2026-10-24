@@ -10,10 +10,8 @@ export function anchorText(lines: string[], startLine: number, endLine: number):
   return lines.slice(startLine - 1, endLine).join('\n');
 }
 
-export function threadIsStale(
-  thread: { startLine: number; endLine: number; anchorText: string; stale: boolean },
-  lines: string[],
-): boolean {
-  return thread.stale || thread.endLine > lines.length
-    || anchorText(lines, thread.startLine, thread.endLine) !== thread.anchorText.replace(/\r(?=\n|$)/g, '');
+/** Whether a file range's text no longer matches the lines it points at. */
+export function rangeIsStale(file: { lines: [number, number]; text: string }, lines: string[]): boolean {
+  const [start, end] = file.lines;
+  return end > lines.length || anchorText(lines, start, end) !== file.text.replace(/\r(?=\n|$)/g, '');
 }

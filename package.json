@@ -2,7 +2,7 @@
   "name": "nitl",
   "displayName": "NITL",
   "description": "Local line-by-line review threads for Git changes and coding agents",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "publisher": "NickyKim",
   "license": "Apache-2.0",
   "engines": {
@@ -270,11 +270,19 @@
           "markdownDescription": "Command that runs your coding agent, for example `claude -p` or `codex exec -`. NITL runs it without a shell in the repository root and sends the review prompt on stdin, or in place of a `{prompt}` argument. The agent's printed answer is posted as its reply. For `claude`, NITL adds `--session-id` or `--resume` so that each thread keeps its session. This setting is read only from user settings, never from a workspace."
         }
       }
-    }
+    },
+    "jsonValidation": [
+      {
+        "fileMatch": "**/agent-review/review.json",
+        "url": "./schema/review.schema.json"
+      }
+    ]
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/vscode": "^1.96.0",
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0",
     "vscode-uri": "^3.2.0"

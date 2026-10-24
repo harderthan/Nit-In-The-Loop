@@ -35,7 +35,7 @@ test('agent can add a line thread, list it, reply, and resolve it', () => {
     const added = run(repo.root, 'add', '--file', 'hello.ts', '--side', 'new', '--line', '1', '--body', 'Check this value');
     assert.equal(added.status, 0, added.stderr);
     const thread = JSON.parse(added.stdout);
-    assert.equal(thread.path, 'hello.ts');
+    assert.equal(thread.location.file.path, 'hello.ts');
     assert.equal(thread.comments[0].author, 'agent');
 
     const listed = run(repo.root, 'threads');
@@ -48,7 +48,7 @@ test('agent can add a line thread, list it, reply, and resolve it', () => {
 
     const resolved = run(repo.root, 'resolve', '--thread', thread.id);
     assert.equal(resolved.status, 0, resolved.stderr);
-    assert.equal(JSON.parse(resolved.stdout).resolved, true);
+    assert.equal(JSON.parse(resolved.stdout).status, 'resolved');
     assert.deepEqual(JSON.parse(run(repo.root, 'threads').stdout), []);
     assert.equal(JSON.parse(run(repo.root, 'threads', '--all').stdout)[0].comments.length, 2);
   } finally {
@@ -81,7 +81,7 @@ test('CRLF content creates a normalized anchor that remains current in thread ou
     writeFileSync(join(repo.root, 'hello.ts'), 'const answer = 42;\r\n');
     const added = run(repo.root, 'add', '--file', 'hello.ts', '--side', 'new', '--line', '1', '--body', 'Check this value');
     assert.equal(added.status, 0, added.stderr);
-    assert.equal(JSON.parse(added.stdout).anchorText, 'const answer = 42;');
+    assert.equal(JSON.parse(added.stdout).location.file.text, 'const answer = 42;');
     const listed = run(repo.root, 'threads');
     assert.equal(listed.status, 0, listed.stderr);
     assert.equal(JSON.parse(listed.stdout)[0].stale, false);
@@ -149,13 +149,13 @@ test('agent can comment on changed commit lines and on the commit body, and filt
     const line = run(repo.root, 'add', '--commit', commit.slice(0, 7), '--file', 'hello.ts', '--side', 'old', '--line', '1', '--body', 'Why 41?');
     assert.equal(line.status, 0, line.stderr);
     assert.deepEqual({ ...JSON.parse(line.stdout), id: '', comments: [] }, {
-      id: '', path: 'hello.ts', side: 'old', startLine: 1, endLine: 1, baseCommit: commit,
-      anchorText: 'const answer = 41;', commit, stale: false, resolved: false, comments: [],
+      id: '', status: 'open', comments: [],
+      location: { on: 'commit', sha: commit, file: { path: 'hello.ts', side: 'old', lines: [1, 1], text: 'const answer = 41;' } },
     });
 
     const body = run(repo.root, 'add', '--commit', commit, '--body', 'Looks good overall');
     assert.equal(body.status, 0, body.stderr);
-    assert.equal(JSON.parse(body.stdout).path, '');
+    assert.deepEqual(JSON.parse(body.stdout).location, { on: 'commit', sha: commit });
 
     const unchanged = run(repo.root, 'add', '--commit', 'HEAD~1', '--file', 'hello.ts', '--side', 'old', '--line', '1', '--body', 'No');
     assert.notEqual(unchanged.status, 0);
@@ -167,7 +167,8 @@ test('agent can comment on changed commit lines and on the commit body, and filt
     assert.equal(run(repo.root, 'add', '--file', 'hello.ts', '--side', 'new', '--line', '1', '--body', 'Working tree').status, 0);
     assert.equal(JSON.parse(run(repo.root, 'threads').stdout).length, 3);
     const forCommit = JSON.parse(run(repo.root, 'threads', '--commit', commit.slice(0, 7)).stdout);
-    assert.deepEqual(forCommit.map((thread: { path: string; stale: boolean }) => [thread.path, thread.stale]), [['hello.ts', false], ['', false]]);
+    type Printed = { location: { file?: { path: string } }; stale: boolean };
+    assert.deepEqual(forCommit.map((thread: Printed) => [thread.location.file?.path, thread.stale]), [['hello.ts', false], [undefined, false]]);
   } finally {
     repo.cleanup();
   }

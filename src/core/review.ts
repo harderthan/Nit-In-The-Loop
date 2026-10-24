@@ -7,43 +7,46 @@ export interface ReviewComment {
   id: string;
   author: Author;
   body: string;
-  createdAt: string;
+  /** ISO 8601 time the comment was written. */
+  at: string;
   /** A reviewer comment waiting to be sent to the agent. */
   queued?: boolean;
 }
 
-export interface ReviewThread {
-  id: string;
+/** Lines of one side of a file diff, and their text when the thread was made. */
+export interface FileRange {
   path: string;
   side: Side;
-  startLine: number;
-  endLine: number;
-  baseCommit: string;
-  anchorText: string;
-  /** Set for a comment on a commit. An empty path makes it a commit body comment. */
-  commit?: string;
+  /** Inclusive one-based first and last line. */
+  lines: [number, number];
+  text: string;
+}
+
+/**
+ * Where a thread is attached. A worktree thread is on the diff of the working tree
+ * against `sha`, the HEAD when it was made. A commit thread is on the diff of commit
+ * `sha`, or on the commit as a whole when it has no file.
+ */
+export type ThreadLocation =
+  | { on: 'worktree'; sha: string; file: FileRange }
+  | { on: 'commit'; sha: string; file?: FileRange };
+
+export interface ReviewThread {
+  id: string;
+  status: 'open' | 'resolved';
+  location: ThreadLocation;
   /** The agent session that last answered this thread. */
-  agentSession?: string;
-  stale: boolean;
-  resolved: boolean;
+  agent?: { session: string };
   comments: ReviewComment[];
 }
 
 export interface ReviewDocument {
-  version: 1;
+  version: 2;
   threads: ReviewThread[];
 }
 
-export type ReviewStore = ReviewDocument;
-
 export interface NewThread {
-  path: string;
-  side: Side;
-  startLine: number;
-  endLine: number;
-  baseCommit: string;
-  anchorText: string;
-  commit?: string;
+  location: ThreadLocation;
   author: Author;
   body: string;
   queued?: boolean;
@@ -56,43 +59,40 @@ export interface NewReply {
 }
 
 export function addThread(review: ReviewDocument, input: NewThread): ReviewThread {
-  if (typeof input.path !== 'string' || (input.path.length === 0 && !input.commit)) throw new Error('Thread path is required');
-  if (typeof input.baseCommit !== 'string') throw new Error('Invalid base commit');
-  if (typeof input.anchorText !== 'string') throw new Error('Invalid anchor text');
-  if (!Number.isSafeInteger(input.startLine) || !Number.isSafeInteger(input.endLine) || input.startLine < 1 || input.endLine < input.startLine) {
-    throw new Error('Invalid thread line range');
-  }
-  if (input.side !== 'old' && input.side !== 'new') {
-    throw new Error('Invalid thread side');
-  }
+  const { location } = input;
+  if (location?.on !== 'worktree' && location?.on !== 'commit') throw new Error('Invalid thread location');
+  if (typeof location.sha !== 'string') throw new Error('Invalid thread commit');
+  if (location.on === 'worktree' && !location.file) throw new Error('Thread path is required');
+  if (location.file) checkFileRange(location.file);
   const thread: ReviewThread = {
     id: randomUUID(),
-    path: input.path,
-    side: input.side,
-    startLine: input.startLine,
-    endLine: input.endLine,
-    baseCommit: input.baseCommit,
-    anchorText: input.anchorText,
-    ...(input.commit ? { commit: input.commit } : {}),
-    stale: false,
-    resolved: false,
+    status: 'open',
+    location: structuredClone(location),
     comments: [newComment(input)],
   };
   review.threads.push(thread);
   return thread;
 }
 
+function checkFileRange(file: FileRange): void {
+  if (typeof file.path !== 'string' || file.path.length === 0) throw new Error('Thread path is required');
+  if (file.side !== 'old' && file.side !== 'new') throw new Error('Invalid thread side');
+  const [start, end] = file.lines ?? [];
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || end < start) throw new Error('Invalid thread line range');
+  if (typeof file.text !== 'string') throw new Error('Invalid anchor text');
+}
+
 export function addReply(review: ReviewDocument, threadId: string, input: NewReply): ReviewComment {
   const thread = requireThread(review, threadId);
   const comment = newComment(input);
   thread.comments.push(comment);
-  thread.resolved = false;
+  thread.status = 'open';
   return comment;
 }
 
 export function setResolved(review: ReviewDocument, threadId: string, resolved: boolean): ReviewThread {
   const thread = requireThread(review, threadId);
-  thread.resolved = resolved;
+  thread.status = resolved ? 'resolved' : 'open';
   return thread;
 }
 
@@ -103,7 +103,7 @@ export function setResolved(review: ReviewDocument, threadId: string, resolved: 
 export function addAgentReply(review: ReviewDocument, threadId: string, body: string, answered: ReadonlySet<string>, session?: string): ReviewComment {
   const thread = requireThread(review, threadId);
   for (const comment of thread.comments) if (answered.has(comment.id)) delete comment.queued;
-  if (session) thread.agentSession = session;
+  if (session) thread.agent = { session };
   return addReply(review, threadId, { author: 'agent', body });
 }
 
@@ -115,7 +115,7 @@ function newComment(input: NewReply): ReviewComment {
     throw new Error('Comment body is required');
   }
   return {
-    id: randomUUID(), author: input.author, body: input.body, createdAt: new Date().toISOString(),
+    id: randomUUID(), author: input.author, body: input.body, at: new Date().toISOString(),
     ...(input.queued ? { queued: true } : {}),
   };
 }

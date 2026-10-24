@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/harderthan/Nit-In-The-Loop/schema/review.schema.json",
+  "title": "NITL review file",
+  "description": "Review threads that NITL keeps in <git-dir>/agent-review/review.json. src/core/store.ts checks the same rules when it reads and writes the file.",
+  "type": "object",
+  "required": ["version", "threads"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 2 },
+    "threads": { "type": "array", "items": { "$ref": "#/$defs/thread" } }
+  },
+  "$defs": {
+    "sha": {
+      "description": "A full SHA-1 or SHA-256 commit hash.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+    },
+    "thread": {
+      "type": "object",
+      "required": ["id", "status", "location", "comments"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["open", "resolved"] },
+        "location": { "$ref": "#/$defs/location" },
+        "agent": {
+          "description": "The agent session that last answered the thread.",
+          "type": "object",
+          "required": ["session"],
+          "additionalProperties": false,
+          "properties": { "session": { "type": "string", "minLength": 1 } }
+        },
+        "comments": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/comment" } }
+      }
+    },
+    "location": {
+      "description": "Where the thread is attached.",
+      "oneOf": [
+        {
+          "description": "The diff of the working tree against sha, the HEAD when the thread was made. sha is empty in a repository without commits.",
+          "type": "object",
+          "required": ["on", "sha", "file"],
+          "additionalProperties": false,
+          "properties": {
+            "on": { "const": "worktree" },
+            "sha": { "anyOf": [{ "$ref": "#/$defs/sha" }, { "const": "" }] },
+            "file": { "$ref": "#/$defs/file" }
+          }
+        },
+        {
+          "description": "The diff of commit sha. Without file, the thread is on the commit as a whole.",
+          "type": "object",
+          "required": ["on", "sha"],
+          "additionalProperties": false,
+          "properties": {
+            "on": { "const": "commit" },
+            "sha": { "$ref": "#/$defs/sha" },
+            "file": { "$ref": "#/$defs/file" }
+          }
+        }
+      ]
+    },
+    "file": {
+      "description": "Lines on one side of a file diff, and their text when the thread was made.",
+      "type": "object",
+      "required": ["path", "side", "lines", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "side": { "enum": ["old", "new"] },
+        "lines": {
+          "description": "Inclusive one-based first and last line. The last line must not come before the first. JSON Schema cannot compare the two items, so only NITL checks that rule.",
+          "type": "array",
+          "prefixItems": [
+            { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+            { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+          ],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "text": { "type": "string" }
+      }
+    },
+    "comment": {
+      "type": "object",
+      "required": ["id", "author", "body", "at"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "author": { "enum": ["human", "agent"] },
+        "body": { "type": "string", "pattern": "\\S" },
+        "at": { "type": "string", "format": "date-time" },
+        "queued": { "description": "A reviewer comment waiting to be sent to the agent.", "type": "boolean" }
+      }
+    }
+  }
+}

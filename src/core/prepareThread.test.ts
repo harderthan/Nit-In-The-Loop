@@ -22,7 +22,8 @@ test('prepareThread builds a normalized anchor from a changed file snapshot', ()
     const input = { path: 'file.txt', side: 'new' as const, startLine: 1, endLine: 2,
       author: 'agent' as const, body: 'Check.' };
     assert.deepEqual(prepareThread(root, changes, input), {
-      ...input, baseCommit: getHeadSha(root), anchorText: 'first\nsecond',
+      author: 'agent', body: 'Check.',
+      location: { on: 'worktree', sha: getHeadSha(root), file: { path: 'file.txt', side: 'new', lines: [1, 2], text: 'first\nsecond' } },
     });
     assert.throws(() => prepareThread(root, changes, { ...input, path: 'missing.txt' }), /outside changed files/);
     assert.throws(() => prepareThread(root, changes, { ...input, endLine: 3 }), /outside the new side/);
@@ -48,19 +49,19 @@ test('prepareCommitThread allows line threads only on lines the commit changed',
     const commit = git('rev-parse', 'HEAD');
     const request = { author: 'agent' as const, body: 'Check.' };
 
+    const text = async (side: 'old' | 'new', startLine: number, endLine: number) =>
+      (await prepareCommitThread(root, commit, { ...request, path: 'file.txt', side, startLine, endLine })).location.file?.text;
     assert.deepEqual(await prepareCommitThread(root, commit.slice(0, 7), { ...request, path: 'file.txt', side: 'new', startLine: 2, endLine: 2 }), {
-      ...request, path: 'file.txt', side: 'new', startLine: 2, endLine: 2, baseCommit: commit, anchorText: 'TWO', commit,
+      ...request, location: { on: 'commit', sha: commit, file: { path: 'file.txt', side: 'new', lines: [2, 2], text: 'TWO' } },
     });
-    assert.equal((await prepareCommitThread(root, commit, { ...request, path: 'file.txt', side: 'old', startLine: 2, endLine: 2 })).anchorText, 'l2');
-    assert.equal((await prepareCommitThread(root, commit, { ...request, path: 'file.txt', side: 'new', startLine: 13, endLine: 13 })).anchorText, 'l13');
+    assert.equal(await text('old', 2, 2), 'l2');
+    assert.equal(await text('new', 13, 13), 'l13');
     // A range may take in the hunk's context lines, as in a pull request diff.
-    assert.equal((await prepareCommitThread(root, commit, { ...request, path: 'file.txt', side: 'new', startLine: 2, endLine: 5 })).anchorText, 'TWO\nl3\nl4\nl5');
+    assert.equal(await text('new', 2, 5), 'TWO\nl3\nl4\nl5');
     await assert.rejects(prepareCommitThread(root, commit, { ...request, path: 'file.txt', side: 'new', startLine: 7, endLine: 7 }), UnchangedLinesError);
     await assert.rejects(prepareCommitThread(root, commit, { ...request, path: 'file.txt', side: 'new', startLine: 2, endLine: 13 }), UnchangedLinesError);
     await assert.rejects(prepareCommitThread(root, commit, { ...request, path: 'image.bin', side: 'new', startLine: 1, endLine: 1 }), UnchangedLinesError);
     await assert.rejects(prepareCommitThread(root, 'no-such-commit', request), /Commit not found/);
-    assert.deepEqual(await prepareCommitThread(root, commit, request), {
-      ...request, path: '', side: 'new', startLine: 1, endLine: 1, baseCommit: commit, anchorText: '', commit,
-    });
+    assert.deepEqual(await prepareCommitThread(root, commit, request), { ...request, location: { on: 'commit', sha: commit } });
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
