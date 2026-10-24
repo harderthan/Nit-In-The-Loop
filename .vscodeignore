@@ -11,3 +11,6 @@ tsconfig.json
 *.vsix
 README.md
 MARKETPLACE.md
+.omc/**
+.github/**
+.claude/**
