@@ -1,6 +1,6 @@
 import { anchorText, reviewLines } from './anchors';
 import { getHeadContent, getHeadSha, getWorkingContent, type ChangedFile } from './git';
-import { BINARY_PREVIEW, getCommitChangedLines, getCommitContent, getCommitParent, rangeIsChanged, resolveCommit } from './history';
+import { BINARY_PREVIEW, getCommitHunkLines, getCommitContent, getCommitParent, rangeIsChanged, resolveCommit } from './history';
 import type { NewThread } from './review';
 
 type ThreadRequest = Pick<NewThread, 'path' | 'side' | 'startLine' | 'endLine' | 'author' | 'body' | 'queued'>;
@@ -25,7 +25,7 @@ export function prepareThread(repoRoot: string, changes: readonly ChangedFile[],
 
 /**
  * Bind a comment to a commit. Without a path it is a commit body comment. With a
- * path, its lines must lie in one block that the commit changed on that side.
+ * path, its lines must lie in one diff hunk on that side, context lines included.
  */
 export async function prepareCommitThread(
   repoRoot: string, commit: string, request: Pick<NewThread, 'author' | 'body'> & Partial<ThreadRequest>,
@@ -40,9 +40,9 @@ export async function prepareCommitThread(
   if (!Number.isSafeInteger(startLine) || !Number.isSafeInteger(endLine) || startLine < 1 || endLine < startLine) {
     throw new Error('Invalid thread line range');
   }
-  const ranges = await getCommitChangedLines(repoRoot, hash, path, side);
+  const ranges = await getCommitHunkLines(repoRoot, hash, path, side);
   if (!rangeIsChanged(ranges, startLine, endLine)) {
-    throw new UnchangedLinesError(`Lines ${startLine}-${endLine} on the ${side} side of ${path} are not changed in commit ${hash.slice(0, 7)}. Leave a commit body comment instead.`);
+    throw new UnchangedLinesError(`Lines ${startLine}-${endLine} on the ${side} side of ${path} are outside the diff of commit ${hash.slice(0, 7)}. Leave a commit body comment instead.`);
   }
   const content = await getCommitContent(repoRoot, side === 'new' ? hash : await getCommitParent(repoRoot, hash), path);
   if (content === BINARY_PREVIEW) throw new Error(`Cannot comment on binary file: ${path}`);

@@ -219,10 +219,11 @@ export async function getCommitSummary(repoRoot: string, hash: string): Promise<
 }
 
 /**
- * Inclusive one-based line ranges that a commit changed on one side of its file
- * diff. The old side is the first parent, so a merge shows what it brought in.
+ * Inclusive one-based line ranges of each diff hunk on one side of a commit's file
+ * diff, with three context lines like a pull request diff. The old side is the
+ * first parent, so a merge shows what it brought in.
  */
-export async function getCommitChangedLines(
+export async function getCommitHunkLines(
   repoRoot: string, hash: string, filePath: string, side: 'old' | 'new',
 ): Promise<Array<[number, number]>> {
   const file = (await getCommitFiles(repoRoot, hash))
@@ -231,7 +232,7 @@ export async function getCommitChangedLines(
   const parent = await getCommitParent(repoRoot, hash);
   // Literal pathspecs keep a name such as `[id].ts` from matching `i.ts` as a glob.
   const patch = await git(repoRoot, [
-    '--literal-pathspecs', 'diff-tree', '--root', '-r', '-p', '-U0', '--find-renames', '--no-commit-id', '--no-color', '--no-ext-diff',
+    '--literal-pathspecs', 'diff-tree', '--root', '-r', '-p', '-U3', '--find-renames', '--no-commit-id', '--no-color', '--no-ext-diff',
     ...(parent ? [parent] : []), hash, '--', ...(file.oldPath ? [file.oldPath] : []), file.path,
   ]);
   const ranges: Array<[number, number]> = [];
@@ -243,7 +244,7 @@ export async function getCommitChangedLines(
   return ranges;
 }
 
-/** Whether a line range lies inside one changed block, where line threads are allowed. */
+/** Whether a line range lies inside one diff hunk, where line threads are allowed. */
 export function rangeIsChanged(ranges: Array<[number, number]>, startLine: number, endLine: number): boolean {
   return ranges.some(([start, end]) => start <= startLine && endLine <= end);
 }

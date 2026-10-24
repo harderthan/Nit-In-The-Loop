@@ -15,7 +15,7 @@ import { selectRepositoryRoot } from './ui/repositorySelection';
 import { StoreWatchers } from './ui/storeWatchers';
 import { commentableReviewFileFor, reviewFileFor } from './ui/reviewAccess';
 import { getFileBlame } from './core/blame';
-import { getCommitChangedLines, getCommitContent, getCommitParent, getCommitSummary, getCurrentBranch, getRepositoryHistory } from './core/history';
+import { getCommitHunkLines, getCommitContent, getCommitParent, getCommitSummary, getCurrentBranch, getRepositoryHistory } from './core/history';
 import { BlameLineItem, BlameTreeProvider, HistoryCommitItem, HistoryFileItem, HistoryLoadMoreItem, type HistoryRepository } from './ui/blameTree';
 
 interface RepoState extends ReviewRepository { storePath: string; changedFiles: ChangedFile[] }
@@ -33,7 +33,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const comments = new ReviewComments(context.extensionUri, (root, file) => {
     return file ? !!commentableReviewFileFor(states, root, file) : states.has(root);
   }, location => location.side === 'commit' ? Promise.resolve([])
-    : getCommitChangedLines(location.repoRoot, location.commit, location.path, location.side).catch(() => []));
+    : getCommitHunkLines(location.repoRoot, location.commit, location.path, location.side).catch(() => []));
   const virtualChanges = new vscode.EventEmitter<vscode.Uri>();
   const agentLog = vscode.window.createOutputChannel('NITL Agent');
   // Threads of every kind per repository, and the threads an agent run is answering.
@@ -294,6 +294,15 @@ export function activate(context: vscode.ExtensionContext): void {
     await refresh();
   }
 
+  /**
+   * A gutter range from VS Code covers every line it touches, even when it ends at
+   * column 0 of an empty line. An editor selection that ends at column 0 excludes that line.
+   */
+  function selectedLines(range: vscode.Range, gutter: boolean): { startLine: number; endLine: number } {
+    return gutter ? { startLine: range.start.line + 1, endLine: range.end.line + 1 }
+      : reviewLocation(range.start.line, range.start.character, range.end.line, range.end.character);
+  }
+
   async function createThread(input?: vscode.CommentReply, queue = false): Promise<void> {
     const native = input && 'thread' in input && 'text' in input ? input : undefined;
     const editor = vscode.window.activeTextEditor;
@@ -312,7 +321,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!state || !file) throw new Error('This file is not available for line review.');
     const body = native?.text ?? await vscode.window.showInputBox({ title: 'Add Review Comment', prompt: 'Comment on the selected line or range', ignoreFocusOut: true });
     if (!body?.trim()) return;
-    const { startLine, endLine } = reviewLocation(range.start.line, range.start.character, range.end.line, range.end.character);
+    const { startLine, endLine } = selectedLines(range, !!native);
     const thread = prepareThread(location.repoRoot, state.changedFiles, {
       path: location.path, side: location.side, startLine, endLine, author: 'human', body, queued: true,
     });
@@ -333,7 +342,7 @@ export function activate(context: vscode.ExtensionContext): void {
     if (!states.has(location.repoRoot)) throw new Error('Open the commit from NITL Git Blame.');
     const body = native?.text ?? await vscode.window.showInputBox({ title: 'Add Review Comment', prompt: 'Comment on this commit', ignoreFocusOut: true });
     if (!body?.trim()) return;
-    const { startLine, endLine } = reviewLocation(range.start.line, range.start.character, range.end.line, range.end.character);
+    const { startLine, endLine } = selectedLines(range, !!native);
     const request = { author: 'human' as const, body, queued: true };
     let thread;
     if (location.side === 'commit') {

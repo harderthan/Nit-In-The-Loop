@@ -37,11 +37,12 @@ test('prepareCommitThread allows line threads only on lines the commit changed',
     git('init', '-q');
     git('config', 'user.name', 'Test');
     git('config', 'user.email', 'test@example.com');
-    writeFileSync(path.join(root, 'file.txt'), 'one\ntwo\nthree\nfour\n');
+    const lines = Array.from({ length: 12 }, (_, index) => `l${index + 1}`);
+    writeFileSync(path.join(root, 'file.txt'), lines.join('\n') + '\n');
     writeFileSync(path.join(root, 'image.bin'), Buffer.from([0, 1]));
     git('add', '-A');
     git('commit', '-qm', 'base');
-    writeFileSync(path.join(root, 'file.txt'), 'one\nTWO\nthree\nfour\nfive\n');
+    writeFileSync(path.join(root, 'file.txt'), ['l1', 'TWO', ...lines.slice(2), 'l13'].join('\n') + '\n');
     writeFileSync(path.join(root, 'image.bin'), Buffer.from([0, 2]));
     git('commit', '-qam', 'change');
     const commit = git('rev-parse', 'HEAD');
@@ -50,10 +51,12 @@ test('prepareCommitThread allows line threads only on lines the commit changed',
     assert.deepEqual(await prepareCommitThread(root, commit.slice(0, 7), { ...request, path: 'file.txt', side: 'new', startLine: 2, endLine: 2 }), {
       ...request, path: 'file.txt', side: 'new', startLine: 2, endLine: 2, baseCommit: commit, anchorText: 'TWO', commit,
     });
-    assert.equal((await prepareCommitThread(root, commit, { ...request, path: 'file.txt', side: 'old', startLine: 2, endLine: 2 })).anchorText, 'two');
-    assert.equal((await prepareCommitThread(root, commit, { ...request, path: 'file.txt', side: 'new', startLine: 5, endLine: 5 })).anchorText, 'five');
-    await assert.rejects(prepareCommitThread(root, commit, { ...request, path: 'file.txt', side: 'new', startLine: 3, endLine: 3 }), UnchangedLinesError);
-    await assert.rejects(prepareCommitThread(root, commit, { ...request, path: 'file.txt', side: 'new', startLine: 2, endLine: 5 }), UnchangedLinesError);
+    assert.equal((await prepareCommitThread(root, commit, { ...request, path: 'file.txt', side: 'old', startLine: 2, endLine: 2 })).anchorText, 'l2');
+    assert.equal((await prepareCommitThread(root, commit, { ...request, path: 'file.txt', side: 'new', startLine: 13, endLine: 13 })).anchorText, 'l13');
+    // A range may take in the hunk's context lines, as in a pull request diff.
+    assert.equal((await prepareCommitThread(root, commit, { ...request, path: 'file.txt', side: 'new', startLine: 2, endLine: 5 })).anchorText, 'TWO\nl3\nl4\nl5');
+    await assert.rejects(prepareCommitThread(root, commit, { ...request, path: 'file.txt', side: 'new', startLine: 7, endLine: 7 }), UnchangedLinesError);
+    await assert.rejects(prepareCommitThread(root, commit, { ...request, path: 'file.txt', side: 'new', startLine: 2, endLine: 13 }), UnchangedLinesError);
     await assert.rejects(prepareCommitThread(root, commit, { ...request, path: 'image.bin', side: 'new', startLine: 1, endLine: 1 }), UnchangedLinesError);
     await assert.rejects(prepareCommitThread(root, 'no-such-commit', request), /Commit not found/);
     assert.deepEqual(await prepareCommitThread(root, commit, request), {

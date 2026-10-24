@@ -159,7 +159,7 @@ test('agent can comment on changed commit lines and on the commit body, and filt
 
     const unchanged = run(repo.root, 'add', '--commit', 'HEAD~1', '--file', 'hello.ts', '--side', 'old', '--line', '1', '--body', 'No');
     assert.notEqual(unchanged.status, 0);
-    assert.match(unchanged.stderr, /not changed in commit/);
+    assert.match(unchanged.stderr, /outside the diff of commit/);
     const lineWithoutFile = run(repo.root, 'add', '--commit', commit, '--line', '1', '--body', 'No');
     assert.match(lineWithoutFile.stderr, /need --file/);
 

@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, test } from 'node:test';
-import { getCommitChangedLines, getCommitContent, getCommitFiles, getCommitParent, getCommitSummary, getCurrentBranch, getRepositoryHistory, rangeIsChanged, resolveCommit } from './history';
+import { getCommitHunkLines, getCommitContent, getCommitFiles, getCommitParent, getCommitSummary, getCurrentBranch, getRepositoryHistory, rangeIsChanged, resolveCommit } from './history';
 
 const repositories: string[] = [];
 
@@ -226,25 +226,27 @@ test('rejects unsafe hashes and repository-escaping content paths', async () => 
 
 test('reports changed line ranges per side, including added, deleted, and renamed files', async () => {
   const root = repository();
-  writeFileSync(path.join(root, 'kept.txt'), 'a\nb\nc\nd\n');
+  const kept = 'abcdefghijkl'.split('');
+  writeFileSync(path.join(root, 'kept.txt'), kept.join('\n') + '\n');
   writeFileSync(path.join(root, 'gone.txt'), 'x\ny\n');
   writeFileSync(path.join(root, 'old name.txt'), 'same\nsame\nsame\n');
   const first = commit(root, 'Initial', 'Alice', '2020-01-02T03:04:05+0000');
-  assert.deepEqual(await getCommitChangedLines(root, first, 'kept.txt', 'new'), [[1, 4]]);
-  assert.deepEqual(await getCommitChangedLines(root, first, 'kept.txt', 'old'), []);
+  assert.deepEqual(await getCommitHunkLines(root, first, 'kept.txt', 'new'), [[1, 12]]);
+  assert.deepEqual(await getCommitHunkLines(root, first, 'kept.txt', 'old'), []);
 
-  writeFileSync(path.join(root, 'kept.txt'), 'a\nB\nc\nd\ne\n');
+  writeFileSync(path.join(root, 'kept.txt'), ['a', 'B', ...kept.slice(2), 'm'].join('\n') + '\n');
   git(root, 'rm', '-q', 'gone.txt');
   git(root, 'mv', 'old name.txt', 'new name.txt');
   writeFileSync(path.join(root, 'new name.txt'), 'same\nsame\nchanged\n');
   const second = commit(root, 'Change', 'Bob', '2020-02-03T04:05:06+0000');
-  assert.deepEqual(await getCommitChangedLines(root, second, 'kept.txt', 'new'), [[2, 2], [5, 5]]);
-  assert.deepEqual(await getCommitChangedLines(root, second, 'kept.txt', 'old'), [[2, 2]]);
-  assert.deepEqual(await getCommitChangedLines(root, second, 'gone.txt', 'old'), [[1, 2]]);
-  assert.deepEqual(await getCommitChangedLines(root, second, 'gone.txt', 'new'), []);
-  assert.deepEqual(await getCommitChangedLines(root, second, 'new name.txt', 'new'), [[3, 3]]);
-  assert.deepEqual(await getCommitChangedLines(root, second, 'old name.txt', 'old'), [[3, 3]]);
-  assert.deepEqual(await getCommitChangedLines(root, second, 'missing.txt', 'new'), []);
+  // Each hunk holds its change and up to three context lines on either side.
+  assert.deepEqual(await getCommitHunkLines(root, second, 'kept.txt', 'new'), [[1, 5], [10, 13]]);
+  assert.deepEqual(await getCommitHunkLines(root, second, 'kept.txt', 'old'), [[1, 5], [10, 12]]);
+  assert.deepEqual(await getCommitHunkLines(root, second, 'gone.txt', 'old'), [[1, 2]]);
+  assert.deepEqual(await getCommitHunkLines(root, second, 'gone.txt', 'new'), []);
+  assert.deepEqual(await getCommitHunkLines(root, second, 'new name.txt', 'new'), [[1, 3]]);
+  assert.deepEqual(await getCommitHunkLines(root, second, 'old name.txt', 'old'), [[1, 3]]);
+  assert.deepEqual(await getCommitHunkLines(root, second, 'missing.txt', 'new'), []);
   writeFileSync(path.join(root, '[id].ts'), 'one\n');
   writeFileSync(path.join(root, 'i.ts'), Array.from({ length: 9 }, (_, index) => `${index}`).join('\n') + '\n');
   const third = commit(root, 'Glob names', 'Bob', '2020-03-03T04:05:06+0000');
@@ -252,7 +254,7 @@ test('reports changed line ranges per side, including added, deleted, and rename
   writeFileSync(path.join(root, '[id].ts'), 'ONE\n');
   const fourth = commit(root, 'Change both', 'Bob', '2020-04-03T04:05:06+0000');
   assert.ok(third);
-  assert.deepEqual(await getCommitChangedLines(root, fourth, '[id].ts', 'new'), [[1, 1]]);
+  assert.deepEqual(await getCommitHunkLines(root, fourth, '[id].ts', 'new'), [[1, 1]]);
   assert.equal(rangeIsChanged([[2, 4]], 2, 4), true);
   assert.equal(rangeIsChanged([[2, 2], [4, 4]], 2, 4), false);
 

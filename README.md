@@ -7,7 +7,7 @@ Review local Git changes with line comments inside VS Code. Open a diff, share a
 ## What you can do
 
 - **Review the working tree.** See staged, unstaged, untracked, deleted, and renamed files against `HEAD` in VS Code's native diff editor.
-- **Inspect Git history.** The Git Blame view lists recent commits of the current branch, its upstream, and the remote default branch. Commits that the default branch does not have come first. It marks branch tips and `HEAD`, and colors commits by branch. Expand a commit to see its changed files and open a diff. You can comment on the lines that the commit changed. If you comment on an unchanged line, NITL adds the comment to the commit body with a reference to the file and line. Choose **Open Commit Comments** on a commit to read and add commit body comments. Choose **Show Git Blame** on a changed file to inspect its committed lines.
+- **Inspect Git history.** The Git Blame view lists recent commits of the current branch, its upstream, and the remote default branch. Commits that the default branch does not have come first. It marks branch tips and `HEAD`, and colors commits by branch. Expand a commit to see its changed files and open a diff. You can comment on a line or a range of lines in a diff hunk. A hunk holds the changed lines and up to three unchanged lines around them, as in a pull request diff. If you comment on a line outside every hunk, NITL adds the comment to the commit body with a reference to the file and line. Choose **Open Commit Comments** on a commit to read and add commit body comments. Choose **Show Git Blame** on a changed file to inspect its committed lines.
 - **Comment on exact lines.** Start a thread on either side of the diff, reply inline, and resolve or reopen it. Threads also appear in the Comments panel.
 - **Exchange comments with an agent.** The bundled CLI lets any agent that can run a command list files and threads, add comments, reply, and change thread status. CLI updates appear in VS Code automatically.
 - **Keep reviews local.** Threads are stored in `agent-review/review.json` under the repository's Git directory, outside the source tree. The extension and CLI need no account or API key.
@@ -49,7 +49,7 @@ npm run cli -- resolve --repo /path/to/repo --thread THREAD_ID
 npm run cli -- reopen --repo /path/to/repo --thread THREAD_ID
 ```
 
-To comment on a commit, add `--commit REV`. With `--file`, `--side`, and `--line`, the lines must be lines that the commit changed. Without `--file`, the comment goes on the commit body. `threads --commit REV` lists only that commit's threads.
+To comment on a commit, add `--commit REV`. With `--file`, `--side`, and `--line`, the lines must be in one diff hunk of the commit. Without `--file`, the comment goes on the commit body. `threads --commit REV` lists only that commit's threads.
 
 ```sh
 npm run cli -- add --repo /path/to/repo --commit 5f3b2c4 --file src/example.ts --side new --line 4 --body "Why this change?"

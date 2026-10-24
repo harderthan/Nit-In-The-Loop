@@ -46,7 +46,7 @@ export class ReviewComments implements vscode.Disposable {
         if (history) {
           if (!this.isReviewFile(history.repoRoot, '')) return [];
           const whole: Array<[number, number]> = document.lineCount ? [[1, document.lineCount]] : [];
-          // Line threads go only on changed lines. The commit body takes comments on any line.
+          // Line threads go only on diff hunk lines. The commit body takes comments on any line.
           const ranges = history.side === 'commit' ? whole : await this.commitChangedLines(history);
           return ranges.filter(([, end]) => end <= document.lineCount)
             .map(([start, end]) => new vscode.Range(start - 1, 0, end - 1, document.lineAt(end - 1).text.length));
