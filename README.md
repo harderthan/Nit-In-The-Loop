@@ -1,75 +1,95 @@
+<div align="center">
+
 # Nit-In-The-Loop
 
-Review local Git changes with line comments inside VS Code. Open a diff, share a thread with a coding agent through the bundled CLI, and resolve it when the work is done.
+Review every line your coding agent writes, in VS Code, before your team sees it.
 
-![NITL diff with an inline thread and the Comments panel](docs/screenshots/agent-review-native.png)
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/NickyKim.nitl?label=VS%20Code%20Marketplace&color=007ACC)](https://marketplace.visualstudio.com/items?itemName=NickyKim.nitl)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/NickyKim.nitl)](https://marketplace.visualstudio.com/items?itemName=NickyKim.nitl)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
 
-## What you can do
+![Send a comment to the agent](docs/images/send-to-agent.gif)
 
-- **Review the working tree.** See staged, unstaged, untracked, deleted, and renamed files against `HEAD` in VS Code's native diff editor.
-- **Inspect Git history.** The Git Blame view lists recent commits of the current branch, its upstream, and the remote default branch. Commits that the default branch does not have come first. It marks branch tips and `HEAD`, and colors commits by branch. Expand a commit to see its changed files and open a diff. You can comment on a line or a range of lines in a diff hunk. A hunk holds the changed lines and up to three unchanged lines around them, as in a pull request diff. If you comment on a line outside every hunk, NITL adds the comment to the commit body with a reference to the file and line. Choose **Open Commit Comments** on a commit to read and add commit body comments. Choose **Show Git Blame** on a changed file to inspect its committed lines.
-- **Comment on exact lines.** Start a thread on either side of the diff, reply inline, and resolve or reopen it. Threads also appear in the Comments panel.
-- **Exchange comments with an agent.** The bundled CLI lets any agent that can run a command list files and threads, add comments, reply, and change thread status. CLI updates appear in VS Code automatically.
-- **Keep reviews local.** Threads are stored in `agent-review/review.json` under the repository's Git directory, outside the source tree. [`schema/review.schema.json`](schema/review.schema.json) describes the file format, and VS Code uses it to check the file when you open it. NITL upgrades a file in the older version 1 format when it reads the file, and saves it in version 2 on the next change. The extension and CLI need no account or API key.
+</div>
 
-[Light theme](docs/screenshots/agent-review-light.png) · [Open thread](docs/screenshots/agent-review-open-status.png) · [Resolved status](docs/screenshots/agent-review-resolved-status.png)
+Coding agents write code fast. In robotics, defense, aerospace, medical devices, and biotech, a defect that ships is expensive to roll back, so a person still reads every line. NITL (Nit-In-The-Loop) gives you a pull-request style review inside VS Code, with one difference: the other side of each thread is your coding agent.
 
-## Get started
+A pull request on GitHub or GitLab is public to every contributor. You do not ask "what does this flag do?" there. In NITL, the review is stored on your machine, and only you and your agent see it. You can ask the agent any question, small or large, until you understand the change. Then you commit, and you open the pull request for your colleagues.
 
-1. **Install the tools:** [VS Code](https://code.visualstudio.com/) 1.96 or newer, Git, and Node.js/npm.
-2. **Start NITL:** Run `npm ci && npm run compile` in this repository, open it in VS Code, then press **F5**. A new Extension Development Host window opens.
-3. **Leave a comment:** In that window, open a Git repository with a changed text file. Click **NITL** in the Activity Bar, select a file, then use **Add Comment** on a line in the diff.
+## Features
 
-Reply or resolve the thread inline. Your comments are restored when you reload the window.
+- Line comments on local changes. NITL shows staged, unstaged, untracked, renamed, and deleted files against `HEAD` in the native VS Code diff editor. You start a thread on one line or a range, on either side of the diff.
+- Threads with your agent. You select Send to Agent, and NITL runs your agent with the thread as the prompt. The agent's answer appears as a reply. If the agent can edit files, the diff updates in place.
+- A review queue. You select Add to Queue to collect comments while you read. Then you select Send Queued Comments to Agent in the NITL view title to send all queued threads in one agent run.
+- One agent session per thread. With Claude Code, each thread resumes its own session, so a follow-up question keeps the earlier context.
+- Commit review. The Git Blame view lists recent commits of the current branch, its upstream, and the default branch. You can comment on a line in a commit diff or on the commit as a whole.
+- Outdated-line detection. When the text under a thread changes, NITL marks the thread as an outdated line. It does not move the thread to an unrelated line.
+- Local storage. Threads are in `.git/agent-review/review.json`, outside the source tree. NITL needs no account, server, or API key of its own.
+- A CLI for agents. An agent in a terminal can list threads, reply, and resolve them with the bundled `nitl` CLI. VS Code shows the changes at once.
 
-## Work with an agent
+![An inline review thread](docs/images/review-thread.png)
 
-NITL sends your review comments to a coding agent and posts its answers in the threads. Set the agent command in your user settings first. If it is not set, NITL shows an error and keeps your comment queued.
+## Quick start
+
+1. Install NITL from the [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=NickyKim.nitl), or run this command:
+
+   ```sh
+   code --install-extension NickyKim.nitl
+   ```
+
+2. Open a Git repository with uncommitted changes.
+3. Select NITL in the Activity Bar, then select a file in Changed Files.
+4. In the diff, move the pointer over a line number and select the `+` icon.
+5. Type your comment, then select Add to Queue or Send to Agent.
+
+You need VS Code 1.96 or later and Git. Your threads stay after you reload the window.
+
+## Connect your agent
+
+NITL runs your agent as a command. Add the command to your user settings (`settings.json`):
 
 ```json
 "agentReview.agentCommand": "claude -p --permission-mode acceptEdits"
 ```
 
-NITL runs this command without a shell in the repository root. It sends the review prompt on stdin, or in place of a `{prompt}` argument. The prompt holds each thread's location, code, and conversation. The agent's printed answer becomes its reply. NITL never adds permission flags, so the command decides whether the agent can edit files. The setting is read only from user settings, never from a workspace, and NITL runs the agent only in a trusted workspace.
+Other agents work the same way. For example, use `codex exec -`. NITL sends the prompt on stdin. If your agent takes the prompt as an argument, put `{prompt}` where the prompt goes.
 
-- **Send to Agent** saves your comment and sends its thread to the agent at once.
-- **Add to Queue** saves your comment without sending it. Choose **Send Queued Comments to Agent** in the NITL view title to send every queued thread in one agent run.
-- **One session per thread.** With `claude`, NITL starts each run with `--session-id` and later resumes that session with `--resume`, so a thread keeps talking to the same session. If the session is gone, NITL starts a new one. Other agents start fresh on each run and read the whole thread from the prompt.
+The prompt holds the location, the code, and the conversation of each thread. NITL posts what the agent prints as the agent's reply.
 
-A run stops after 10 minutes or 1 MB of output, and you can cancel it from its notification. If the run fails, no reply is posted and the comments stay queued. The **NITL Agent** output channel shows the agent's error output.
+Before you use an agent, read these rules:
 
-The CLI shares the extension's review store. From this source checkout, use `npm run cli --`:
+- NITL adds no permission flags. Your command decides whether the agent can edit files. Without `--permission-mode acceptEdits`, Claude Code can only answer.
+- NITL reads the command only from user settings. A workspace cannot change it.
+- NITL runs the agent only in a trusted workspace, without a shell, in the repository root.
+- A run stops after 10 minutes or 1 MB of output. You can cancel a run from its notification.
+- If a run fails, NITL posts no reply and keeps your comments queued. The NITL Agent output channel shows the error output.
 
-```sh
-npm run cli -- files --repo /path/to/repo
-npm run cli -- threads --repo /path/to/repo
-npm run cli -- add --repo /path/to/repo --file src/example.ts --side new --line 4 --body "Please handle this error case."
-npm run cli -- reply --repo /path/to/repo --thread THREAD_ID --body "Handled."
-npm run cli -- resolve --repo /path/to/repo --thread THREAD_ID
-npm run cli -- reopen --repo /path/to/repo --thread THREAD_ID
-```
+## Use the CLI
 
-To comment on a commit, add `--commit REV`. With `--file`, `--side`, and `--line`, the lines must be in one diff hunk of the commit. Without `--file`, the comment goes on the commit body. `threads --commit REV` lists only that commit's threads.
+The CLI uses the same review file as the extension. In VS Code, select Copy NITL CLI Command in the Changed Files view title. You get a `node <extension>/dist/cli.js files --repo <repository>` command for your installation. In the examples below, `nitl` stands for `node <extension>/dist/cli.js`.
 
 ```sh
-npm run cli -- add --repo /path/to/repo --commit 5f3b2c4 --file src/example.ts --side new --line 4 --body "Why this change?"
-npm run cli -- add --repo /path/to/repo --commit 5f3b2c4 --body "The commit message does not match the change."
-npm run cli -- threads --repo /path/to/repo --commit 5f3b2c4
+nitl files   --repo /path/to/repo
+nitl threads --repo /path/to/repo [--all] [--commit REV]
+nitl add     --repo /path/to/repo --file src/example.ts --side new --line 4 [--end-line 6] --body "Handle this error case."
+nitl reply   --repo /path/to/repo --thread THREAD_ID --body "Handled."
+nitl resolve --repo /path/to/repo --thread THREAD_ID
+nitl reopen  --repo /path/to/repo --thread THREAD_ID
 ```
 
-`files` and `threads` return JSON. `threads` lists open threads by default; add `--all` to include resolved threads. For a range comment, add `--end-line NUMBER` to `add`. The CLI validates paths, diff sides, and line ranges before writing a comment.
+- `files` and `threads` print JSON. `threads` lists open threads. Add `--all` to include resolved threads.
+- To comment on a commit, add `--commit REV` to `add`. The lines must be in one diff hunk of that commit. Without `--file`, the comment goes on the commit as a whole.
+- The CLI makes sure that the path, the diff side, and the line range are valid before it writes a comment.
 
-For an installed VSIX, choose **Copy NITL CLI Command** from the NITL view title or the Command Palette. It copies a `node <extension>/dist/cli.js files --repo <repository>` command that uses the installed extension, so the source checkout is unnecessary. Replace `files` with another command above and supply its options. The extension refreshes when the CLI changes the review store.
+## How it works
 
-An agent that works in its own terminal session can also use this CLI to read threads and reply.
+NITL reads the diff from Git and never changes your files. The diff documents are read-only, so you edit code in a regular editor tab. NITL refreshes after each save. While its view is open, NITL also refreshes on Git changes. Select Refresh Reviews to refresh by hand.
 
-## Review behavior
+[`schema/review.schema.json`](schema/review.schema.json) describes the review file. When you open the file, VS Code validates it against this schema.
 
-Diff documents are read-only. Edit the real file in a regular editor; NITL refreshes after saves and checks for external Git changes while its view is visible. Use **Refresh Reviews** when needed.
+New files have an empty `HEAD` side, and deleted files have an empty working-tree side. Binary files show in the list but cannot get line comments. If the line of a thread no longer exists, the thread shows under its file in Changed Files.
 
-New files have an empty `HEAD` side; deleted files have an empty working-tree side. Renames read their old path from `HEAD`. Binary files appear in the list but cannot receive line comments. When a thread's original text changes, it is marked **Outdated line**. If its line no longer exists, the thread appears under the file in Changed Files instead of being placed on an unrelated line.
-
-If a writer is forcibly stopped and later writes time out, check for `review.json.lock.reclaim` beside the review file. Remove that guard only after confirming no NITL process is writing.
+If a writer stops by force and later writes time out, look for `review.json.lock.reclaim` beside the review file. Make sure that no NITL process is writing, then remove that file.
 
 ## Development
 
@@ -79,4 +99,8 @@ npm run compile
 npm test
 ```
 
-The launch configuration in `.vscode/launch.json` starts the Extension Development Host.
+Open this repository in VS Code and press F5 to start an Extension Development Host. To run the CLI from source, use `npm run cli -- <command>`.
+
+## License
+
+[Apache 2.0](LICENSE)
