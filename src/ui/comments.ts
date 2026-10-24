@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import type { ReviewComment, ReviewThread } from '../core/review';
-import { rangeIsStale } from '../core/anchors';
-import { decodeHistoryUri, decodeReviewUri, lineRange, reviewLines, type HistoryLocation } from './anchors';
+import { rangeIsStale, reviewLines } from '../core/anchors';
+import { decodeHistoryUri, decodeReviewUri, lineRange, type HistoryLocation } from './anchors';
 import { authorPresentation } from './author';
 
 export interface RenderedThread {
@@ -111,7 +111,7 @@ export class ReviewComments implements vscode.Disposable {
       const status = this.running.has(key) ? ' · Agent answering…' : queued ? ` · ${queued} queued` : '';
       const [start, end] = file?.lines ?? [0, 0];
       rendered.thread.label = (!file ? `Commit ${record.location.sha.slice(0, 7)}`
-        : stale ? 'Outdated line · review anchor changed' : `Lines ${start}${end !== start ? `–${end}` : ''}`) + status;
+        : stale ? 'Outdated line · review anchor changed' : end !== start ? `Lines ${start}–${end}` : `Line ${start}`) + status;
       // `openQueued` shows the thread's send button. Menus match open threads with /^open/.
       rendered.thread.contextValue = resolved ? 'resolved' : queued ? 'openQueued' : 'open';
       rendered.thread.state = resolved ? vscode.CommentThreadState.Resolved : vscode.CommentThreadState.Unresolved;

@@ -24,6 +24,6 @@ jobs:
       - run: npm test
       - run: npm run compile
       # Publishes only when package.json carries a version the Marketplace does not have yet.
-      - run: npx @vscode/vsce@4.0.0 publish --readme-path MARKETPLACE.md --skip-duplicate
+      - run: npx @vscode/vsce@4.0.0 publish --skip-duplicate
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}

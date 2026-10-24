@@ -1,14 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { URI } from 'vscode-uri';
-import { lineRange, reviewLocation, decodeHistoryUri, decodeReviewUri, encodeHistoryUri, encodeReviewUri, reviewLines } from './anchors';
+import { reviewLines } from '../core/anchors';
+import { lineRange, reviewLocation, decodeHistoryUri, decodeReviewUri, encodeHistoryUri, encodeReviewUri } from './anchors';
 
 test('stored inclusive one-based line range maps to editor range', () => {
   assert.deepEqual(lineRange(3, 5), { start: 2, end: 4 });
 });
 
 test('editor selection maps to inclusive one-based line range', () => {
-  assert.deepEqual(reviewLocation(2, 4, 5, 0), { startLine: 3, endLine: 5 });
+  assert.deepEqual(reviewLocation(2, 5, 0), { startLine: 3, endLine: 5 });
 });
 
 test('review URIs preserve side, repository and Unicode path', () => {

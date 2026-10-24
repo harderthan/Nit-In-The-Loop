@@ -46,7 +46,7 @@ export function buildAgentPrompt(repoRoot: string, threads: ReviewThread[]): str
   return [
     `You are answering code review threads from NITL, a local review tool, in the repository ${repoRoot}.`,
     'Address the newest reviewer comments in each thread. If a comment asks for a code change, edit the files in the working tree. If you disagree, explain why.',
-    'Do not run the nitl or agent-review CLI. Your printed answer is posted to the threads for you.',
+    'Do not run the nitl CLI. Your printed answer is posted to the threads for you.',
     'Print one section per thread. Start each section with its marker line exactly as given below, then your reply to that thread in Markdown.',
     '',
     ...sections.flatMap(section => [section, '']),

@@ -18,7 +18,6 @@ export async function readReview(filePath: string): Promise<ReviewDocument> {
   } catch (error) {
     throw new Error(`Cannot parse review file ${filePath}: ${message(error)}`);
   }
-  if (record(parsed) && parsed.version === 1) parsed = upgradeV1(parsed, filePath);
   validateReview(parsed, filePath);
   return parsed;
 }
@@ -179,54 +178,6 @@ function isDateTime(value: string): boolean {
 
 function keys(value: Record<string, unknown>, allowed: string[]): boolean {
   return Object.keys(value).every(key => allowed.includes(key));
-}
-
-/** Version 1 kept every thread field flat. Reading upgrades it, and the next write saves version 2. */
-function upgradeV1(value: unknown, filePath: string): ReviewDocument {
-  if (!record(value) || !Array.isArray(value.threads) || !value.threads.every(validV1Thread)) throw invalid(filePath);
-  return {
-    version: 2,
-    threads: value.threads.map(thread => {
-      const file = thread.path
-        ? { path: thread.path, side: thread.side, lines: [thread.startLine, thread.endLine] as [number, number], text: thread.anchorText }
-        : undefined;
-      return {
-        id: thread.id,
-        status: thread.resolved ? 'resolved' : 'open',
-        location: thread.commit ? { on: 'commit', sha: thread.commit, ...(file ? { file } : {}) }
-          : { on: 'worktree', sha: thread.baseCommit, file: file! },
-        ...(thread.agentSession ? { agent: { session: thread.agentSession } } : {}),
-        comments: thread.comments.map(comment => ({
-          id: comment.id, author: comment.author, body: comment.body, at: comment.createdAt,
-          ...(comment.queued ? { queued: true } : {}),
-        })),
-      };
-    }),
-  };
-}
-
-interface V1Thread {
-  id: string; path: string; side: 'old' | 'new'; startLine: number; endLine: number; baseCommit: string;
-  anchorText: string; commit?: string; agentSession?: string; resolved: boolean;
-  comments: Array<{ id: string; author: 'human' | 'agent'; body: string; createdAt: string; queued?: boolean }>;
-}
-
-function validV1Thread(value: unknown): value is V1Thread {
-  if (!record(value)) return false;
-  return typeof value.id === 'string' && value.id.length > 0
-    && typeof value.path === 'string' && (value.path.length > 0 || value.commit !== undefined)
-    && (value.commit === undefined || (typeof value.commit === 'string' && HASH.test(value.commit)))
-    && (value.side === 'old' || value.side === 'new')
-    && Number.isSafeInteger(value.startLine) && (value.startLine as number) > 0
-    && Number.isSafeInteger(value.endLine) && (value.endLine as number) >= (value.startLine as number)
-    && typeof value.baseCommit === 'string'
-    && typeof value.anchorText === 'string'
-    && (value.agentSession === undefined || typeof value.agentSession === 'string')
-    && typeof value.resolved === 'boolean'
-    && Array.isArray(value.comments) && value.comments.length > 0 && value.comments.every(comment => record(comment)
-      && typeof comment.id === 'string' && (comment.author === 'human' || comment.author === 'agent')
-      && typeof comment.body === 'string' && typeof comment.createdAt === 'string'
-      && (comment.queued === undefined || typeof comment.queued === 'boolean'));
 }
 
 function record(value: unknown): value is Record<string, unknown> {

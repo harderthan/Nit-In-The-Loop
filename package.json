@@ -1,15 +1,33 @@
 {
   "name": "nitl",
   "displayName": "NITL",
-  "description": "Local line-by-line review threads for Git changes and coding agents",
-  "version": "0.1.8",
+  "description": "Review every line your coding agent writes. Local line comment threads in VS Code for Claude Code, Codex, or any CLI agent.",
+  "version": "0.2.0",
   "publisher": "NickyKim",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/harderthan/Nit-In-The-Loop"
+  },
+  "bugs": {
+    "url": "https://github.com/harderthan/Nit-In-The-Loop/issues"
+  },
+  "homepage": "https://github.com/harderthan/Nit-In-The-Loop#readme",
   "engines": {
     "vscode": "^1.96.0"
   },
   "categories": [
-    "Other"
+    "SCM Providers",
+    "AI"
+  ],
+  "keywords": [
+    "code review",
+    "ai agent",
+    "claude",
+    "codex",
+    "git",
+    "diff",
+    "comments"
   ],
   "main": "./dist/extension.js",
   "type": "commonjs",
@@ -18,11 +36,6 @@
     "test": "node --import tsx --test src/**/*.test.ts src/*.test.ts",
     "cli": "tsx src/cli.ts"
   },
-  "activationEvents": [
-    "onView:agentReview.changes",
-    "onView:agentReview.blame",
-    "onCommand:agentReview.openDiff"
-  ],
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -288,7 +301,6 @@
     "vscode-uri": "^3.2.0"
   },
   "bin": {
-    "nitl": "./dist/cli.js",
-    "agent-review": "./dist/cli.js"
+    "nitl": "./dist/cli.js"
   }
 }

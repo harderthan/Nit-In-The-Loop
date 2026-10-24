@@ -302,7 +302,7 @@ export function activate(context: vscode.ExtensionContext): void {
    */
   function selectedLines(range: vscode.Range, gutter: boolean): { startLine: number; endLine: number } {
     return gutter ? { startLine: range.start.line + 1, endLine: range.end.line + 1 }
-      : reviewLocation(range.start.line, range.start.character, range.end.line, range.end.character);
+      : reviewLocation(range.start.line, range.end.line, range.end.character);
   }
 
   async function createThread(input?: vscode.CommentReply, queue = false): Promise<void> {

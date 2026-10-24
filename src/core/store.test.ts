@@ -37,7 +37,7 @@ test('readReview rejects corrupt data and preserves original file', async () => 
   const directory = await mkdtemp(path.join(tmpdir(), 'review-store-'));
   const file = path.join(directory, 'reviews.json');
   try {
-    const corrupt = '{"version":1,"threads": [broken';
+    const corrupt = '{"version":2,"threads": [broken';
     await writeFile(file, corrupt);
     await assert.rejects(readReview(file), /review|json|parse/i);
     assert.equal(await readFile(file, 'utf8'), corrupt);
@@ -156,42 +156,6 @@ test('commit threads round trip and reject an invalid commit hash', async () => 
     await writeReview(file, review);
     assert.deepEqual(await readReview(file), review);
     await writeFile(file, JSON.stringify({ version: 2, threads: [{ ...review.threads[0], location: { on: 'commit', sha: 'HEAD' } }] }));
-    await assert.rejects(readReview(file), /Invalid review file/);
-  } finally { await rm(directory, { recursive: true, force: true }); }
-});
-
-test('a version 1 file reads as version 2 and is saved as version 2 on the next write', async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'review-store-'));
-  const file = path.join(directory, 'reviews.json');
-  const commit = 'c'.repeat(40);
-  const comment = { id: 'c1', author: 'human', body: 'Why?', createdAt: '2026-01-01T00:00:00.000Z' };
-  const v1 = {
-    version: 1,
-    threads: [
-      { id: 't1', path: 'a.ts', side: 'old', startLine: 2, endLine: 3, baseCommit: commit, anchorText: 'x', stale: false, resolved: true,
-        agentSession: 's1', comments: [{ ...comment, queued: true }] },
-      { id: 't2', path: 'b.ts', side: 'new', startLine: 1, endLine: 1, baseCommit: commit, anchorText: 'y', commit, stale: false, resolved: false, comments: [comment] },
-      { id: 't3', path: '', side: 'new', startLine: 1, endLine: 1, baseCommit: commit, anchorText: '', commit, stale: false, resolved: false, comments: [comment] },
-    ],
-  };
-  try {
-    await writeFile(file, JSON.stringify(v1));
-    const upgraded = await readReview(file);
-    const at = comment.createdAt;
-    assert.deepEqual(upgraded, {
-      version: 2,
-      threads: [
-        { id: 't1', status: 'resolved', location: { on: 'worktree', sha: commit, file: { path: 'a.ts', side: 'old', lines: [2, 3], text: 'x' } },
-          agent: { session: 's1' }, comments: [{ id: 'c1', author: 'human', body: 'Why?', at, queued: true }] },
-        { id: 't2', status: 'open', location: { on: 'commit', sha: commit, file: { path: 'b.ts', side: 'new', lines: [1, 1], text: 'y' } },
-          comments: [{ id: 'c1', author: 'human', body: 'Why?', at }] },
-        { id: 't3', status: 'open', location: { on: 'commit', sha: commit }, comments: [{ id: 'c1', author: 'human', body: 'Why?', at }] },
-      ],
-    });
-    assert.equal(JSON.parse(await readFile(file, 'utf8')).version, 1);
-    await updateReview(file, () => {});
-    assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), upgraded);
-    await writeFile(file, JSON.stringify({ version: 1, threads: [{ ...v1.threads[0], side: 'both' }] }));
     await assert.rejects(readReview(file), /Invalid review file/);
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

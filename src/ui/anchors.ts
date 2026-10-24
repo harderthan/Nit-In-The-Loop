@@ -1,5 +1,4 @@
 export type ReviewSide = 'old' | 'new';
-export { reviewLines } from '../core/anchors';
 
 export function lineRange(startLine: number, endLine: number): { start: number; end: number } {
   if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine) {
@@ -8,7 +7,7 @@ export function lineRange(startLine: number, endLine: number): { start: number; 
   return { start: startLine - 1, end: endLine - 1 };
 }
 
-export function reviewLocation(startLine: number, startCharacter: number, endLine: number, endCharacter: number): { startLine: number; endLine: number } {
+export function reviewLocation(startLine: number, endLine: number, endCharacter: number): { startLine: number; endLine: number } {
   if (endLine < startLine || startLine < 0) throw new Error('Invalid editor selection');
   const inclusiveEnd = endLine > startLine && endCharacter === 0 ? endLine - 1 : endLine;
   return { startLine: startLine + 1, endLine: inclusiveEnd + 1 };

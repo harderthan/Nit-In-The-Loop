@@ -1,16 +1,13 @@
 .vscode/**
 .gitignore
 src/**
-docs/superpowers/**
-docs/screenshots/**
+docs/**
 node_modules/**
 dist/**/*.test.js
 dist/**/*.test.js.map
 package-lock.json
 tsconfig.json
 *.vsix
-README.md
-MARKETPLACE.md
 .omc/**
 .github/**
 .claude/**
